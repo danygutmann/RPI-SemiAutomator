@@ -1,0 +1,33 @@
+# RPI-SemiAutomator configuration
+#
+# Defines the serial ports that should be available in the UI as well as
+# predefined "macro" commands that can be sent to a port with a single click.
+#
+# Ports are not opened automatically - they are only listed as presets that
+# can be selected and connected to from the web UI. Additional ports found
+# on the system (e.g. plugged in USB-serial adapters) are also shown
+# automatically and can be connected to even if they are not listed here.
+
+ports:
+  - name: "USB0"
+    device: "/dev/ttyUSB0"
+    baudrate: 115200
+  - name: "USB1"
+    device: "/dev/ttyUSB1"
+    baudrate: 9600
+  - name: "ACM0"
+    device: "/dev/ttyACM0"
+    baudrate: 115200
+
+# Macro buttons. Each macro sends `command` (a newline is appended
+# automatically unless `raw` is set to true, in which case the command is
+# sent exactly as specified, without any modification).
+macros:
+  - label: "Status"
+    command: "status"
+  - label: "Reset"
+    command: "reset"
+  - label: "Version"
+    command: "version"
+  - label: "Help"
+    command: "help"

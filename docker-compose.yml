@@ -1,0 +1,24 @@
+services:
+  rpi-semiautomator:
+    build: .
+    image: rpi-semiautomator:latest
+    container_name: rpi-semiautomator
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    # Pass through the serial devices the container should be able to use.
+    # Add/remove entries to match the adapters plugged into your Raspberry
+    # Pi (`ls /dev/tty{USB,ACM}*` on the host to find them). Using explicit
+    # `devices:` entries avoids running the container in privileged mode.
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyUSB1:/dev/ttyUSB1"
+      - "/dev/ttyACM0:/dev/ttyACM0"
+    # The dialout group typically owns serial device nodes on Debian based
+    # systems (incl. Raspberry Pi OS); joining it avoids needing --privileged.
+    group_add:
+      - dialout
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    environment:
+      - RPI_SEMIAUTOMATOR_CONFIG=/app/config/config.yaml
