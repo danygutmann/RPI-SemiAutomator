@@ -18,7 +18,9 @@ import yaml
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
 DEFAULT_FAVORITES_PATH = Path(__file__).resolve().parent.parent / "data" / "favorites.yaml"
+DEFAULT_MACROS_PATH = Path(__file__).resolve().parent.parent / "data" / "macros.yaml"
 _favorites_lock = threading.Lock()
+_macros_lock = threading.Lock()
 
 
 @dataclass
@@ -54,6 +56,11 @@ def _config_path() -> Path:
 def _favorites_path() -> Path:
     override = os.environ.get("RPI_SEMIAUTOMATOR_FAVORITES")
     return Path(override) if override else DEFAULT_FAVORITES_PATH
+
+
+def _macros_path() -> Path:
+    override = os.environ.get("RPI_SEMIAUTOMATOR_MACROS")
+    return Path(override) if override else DEFAULT_MACROS_PATH
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -143,3 +150,66 @@ def remove_favorite(device: str, path: Path | None = None) -> None:
         favorites = {favorite.device: favorite for favorite in load_favorites(favorites_path)}
         favorites.pop(device, None)
         _write_favorites(favorites, favorites_path)
+
+
+def load_macros(path: Path | None = None) -> List[Macro]:
+    """Load user-defined macros created from the UI."""
+    macros_path = path or _macros_path()
+    if not macros_path.exists():
+        return []
+
+    with macros_path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+
+    return [
+        Macro(
+            label=entry["label"],
+            command=entry["command"],
+            raw=bool(entry.get("raw", False)),
+            device=entry.get("device"),
+        )
+        for entry in raw.get("macros", []) or []
+    ]
+
+
+def _macro_key(macro: Macro) -> tuple[str | None, str]:
+    return (macro.device, macro.label)
+
+
+def _write_macros(macros: dict[tuple[str | None, str], Macro], macros_path: Path) -> None:
+    macros_path.parent.mkdir(parents=True, exist_ok=True)
+    with macros_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(
+            {
+                "macros": [
+                    {
+                        "label": macro.label,
+                        "command": macro.command,
+                        "raw": macro.raw,
+                        "device": macro.device,
+                    }
+                    for macro in macros.values()
+                ]
+            },
+            handle,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+
+def save_macro(macro: Macro, path: Path | None = None) -> None:
+    """Add or update one user-defined macro in the writable user configuration."""
+    macros_path = path or _macros_path()
+    with _macros_lock:
+        macros = {_macro_key(existing): existing for existing in load_macros(macros_path)}
+        macros[_macro_key(macro)] = macro
+        _write_macros(macros, macros_path)
+
+
+def remove_macro(label: str, device: str | None = None, path: Path | None = None) -> None:
+    """Remove one user-defined macro (by label and optional device) from storage."""
+    macros_path = path or _macros_path()
+    with _macros_lock:
+        macros = {_macro_key(existing): existing for existing in load_macros(macros_path)}
+        macros.pop((device, label), None)
+        _write_macros(macros, macros_path)

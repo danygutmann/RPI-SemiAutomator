@@ -6,7 +6,15 @@ import pytest
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from config import load_config, load_favorites, remove_favorite, save_favorite  # noqa: E402
+from config import (  # noqa: E402
+    load_config,
+    load_favorites,
+    load_macros,
+    remove_favorite,
+    remove_macro,
+    save_favorite,
+    save_macro,
+)
 import serial_manager as serial_manager_module  # noqa: E402
 from serial_manager import SerialConnection, SerialManager  # noqa: E402
 
@@ -100,6 +108,52 @@ def test_remove_favorite_missing_device_is_noop(tmp_path):
     assert load_favorites(favorites_path) == [
         port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600)
     ]
+
+
+def test_save_macro_adds_and_updates_macro(tmp_path):
+    macros_path = tmp_path / "macros.yaml"
+    macro = __import__("config").Macro
+    save_macro(macro(label="Ping", command="ping"), macros_path)
+    save_macro(macro(label="Ping", command="ping -c1"), macros_path)
+
+    assert load_macros(macros_path) == [macro(label="Ping", command="ping -c1")]
+
+
+def test_save_macro_device_scoped_is_independent_of_global(tmp_path):
+    macros_path = tmp_path / "macros.yaml"
+    macro = __import__("config").Macro
+    save_macro(macro(label="Ping", command="ping"), macros_path)
+    save_macro(
+        macro(label="Ping", command="ping -c1", device="/dev/ttyTEST0"), macros_path
+    )
+
+    loaded = load_macros(macros_path)
+    assert len(loaded) == 2
+    assert macro(label="Ping", command="ping") in loaded
+    assert (
+        macro(label="Ping", command="ping -c1", device="/dev/ttyTEST0") in loaded
+    )
+
+
+def test_remove_macro_deletes_entry(tmp_path):
+    macros_path = tmp_path / "macros.yaml"
+    macro = __import__("config").Macro
+    save_macro(macro(label="Ping", command="ping"), macros_path)
+    save_macro(macro(label="Status", command="status"), macros_path)
+
+    remove_macro("Ping", path=macros_path)
+
+    assert load_macros(macros_path) == [macro(label="Status", command="status")]
+
+
+def test_remove_macro_missing_entry_is_noop(tmp_path):
+    macros_path = tmp_path / "macros.yaml"
+    macro = __import__("config").Macro
+    save_macro(macro(label="Ping", command="ping"), macros_path)
+
+    remove_macro("DoesNotExist", path=macros_path)
+
+    assert load_macros(macros_path) == [macro(label="Ping", command="ping")]
 
 
 def test_serial_manager_get_or_create_is_idempotent():
