@@ -7,6 +7,7 @@ APP_DIR = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_DIR))
 
 from config import load_config, load_favorites, save_favorite  # noqa: E402
+import serial_manager as serial_manager_module  # noqa: E402
 from serial_manager import SerialConnection, SerialManager  # noqa: E402
 
 
@@ -71,6 +72,26 @@ def test_serial_manager_get_or_create_is_idempotent():
     conn1 = manager.get_or_create("/dev/ttyFAKE0", 9600)
     conn2 = manager.get_or_create("/dev/ttyFAKE0", 115200)
     assert conn1 is conn2
+
+
+def test_serial_manager_discovers_all_supported_device_patterns(monkeypatch):
+    matches = {
+        "/dev/ttyUSB*": ["/dev/ttyUSB1", "/dev/ttyUSB0"],
+        "/dev/ttyACM*": ["/dev/ttyACM0"],
+        "/dev/ttyAMA*": ["/dev/ttyAMA0"],
+        "/dev/serial/by-id/*": ["/dev/serial/by-id/usb-adapter"],
+    }
+    monkeypatch.setattr(
+        serial_manager_module.glob, "glob", lambda pattern: matches[pattern]
+    )
+
+    assert SerialManager().list_available_devices() == [
+        "/dev/ttyUSB0",
+        "/dev/ttyUSB1",
+        "/dev/ttyACM0",
+        "/dev/ttyAMA0",
+        "/dev/serial/by-id/usb-adapter",
+    ]
 
 
 def test_serial_connection_send_requires_open_port():

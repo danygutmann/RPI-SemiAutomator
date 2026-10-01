@@ -6,21 +6,20 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    # Pass through the serial devices the container should be able to use.
-    # Add/remove entries to match the adapters plugged into your Raspberry
-    # Pi (`ls /dev/tty{USB,ACM}*` on the host to find them). Using explicit
-    # `devices:` entries avoids running the container in privileged mode.
-    devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
-      - "/dev/ttyUSB1:/dev/ttyUSB1"
-      - "/dev/ttyACM0:/dev/ttyACM0"
+    # Share device nodes so serial adapters plugged in after startup are
+    # visible. The cgroup rules limit access to USB, ACM, and UART serial ports.
+    volumes:
+      - /dev:/dev
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      - ./data:/app/data
+    device_cgroup_rules:
+      - "c 188:* rmw"
+      - "c 166:* rmw"
+      - "c 204:* rmw"
     # The dialout group typically owns serial device nodes on Debian based
     # systems (incl. Raspberry Pi OS); joining it avoids needing --privileged.
     group_add:
       - dialout
-    volumes:
-      - ./config/config.yaml:/app/config/config.yaml:ro
-      - ./data:/app/data
     environment:
       - RPI_SEMIAUTOMATOR_CONFIG=/app/config/config.yaml
       - RPI_SEMIAUTOMATOR_FAVORITES=/app/data/favorites.yaml
