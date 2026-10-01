@@ -21,7 +21,9 @@ ports:
 
 # Macro buttons. Each macro sends `command` (a newline is appended
 # automatically unless `raw` is set to true, in which case the command is
-# sent exactly as specified, without any modification).
+# sent exactly as specified, without any modification). Set `device` to a
+# serial device path to show a macro only for that interface; omit it to show
+# the macro for every interface.
 macros:
   - label: "Status"
     command: "status"
@@ -31,3 +33,6 @@ macros:
     command: "version"
   - label: "Help"
     command: "help"
+  # - label: "Device-specific action"
+  #   command: "device-command"
+  #   device: "/dev/ttyUSB0"

@@ -8,11 +8,13 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 
 ## Funktionen
 
-- Übersicht aller konfigurierten sowie automatisch erkannten seriellen Ports
+- Auswahl aller konfigurierten sowie automatisch erkannten seriellen Ports per Dropdown
 - Verbinden/Trennen einzelner Ports mit einstellbarer Baudrate
 - Live-Log der empfangenen Daten je Port
+- Download des aktuellen Logs als lokale Textdatei
 - Freitext-Eingabe zum Senden beliebiger Befehle
-- Konfigurierbare Makro-Buttons für häufig genutzte Befehle
+- Globale und schnittstellenspezifische Makro-Buttons
+- Schnittstellen mit Baudrate als Favoriten speichern
 - Läuft als Docker-Container, geeignet für den Raspberry Pi
 
 ## Konfiguration
@@ -29,10 +31,19 @@ ports:
 macros:
   - label: "Status"
     command: "status"
+  - label: "USB0 zurücksetzen"
+    command: "reset"
+    device: "/dev/ttyUSB0"
 ```
 
 Der Pfad zur Konfigurationsdatei kann über die Umgebungsvariable
 `RPI_SEMIAUTOMATOR_CONFIG` überschrieben werden.
+Makros ohne `device` werden für alle Schnittstellen angezeigt; mit `device`
+erscheinen sie nur bei der angegebenen Schnittstelle. In der Weboberfläche
+kann die Baudrate angepasst und die Schnittstelle über **Als Favorit speichern**
+dauerhaft gemerkt werden. Favoriten werden in `data/favorites.yaml` gespeichert
+(alternativ über `RPI_SEMIAUTOMATOR_FAVORITES`). Beim Download enthält die
+Logdatei die aktuell im Speicher verfügbaren empfangenen Zeilen.
 
 ## Start mit Docker
 
@@ -46,7 +57,8 @@ erreichbar.
 Passe in [`docker-compose.yml`](docker-compose.yml) die Liste unter
 `devices:` an die tatsächlich verwendeten seriellen Schnittstellen deines
 Raspberry Pi an (`ls /dev/tty{USB,ACM}*` auf dem Host zeigt die verfügbaren
-Geräte).
+Geräte). Die Ordnerbindung `./data:/app/data` bewahrt gespeicherte Favoriten
+über Container-Neustarts hinweg.
 
 ## Lokale Entwicklung (ohne Docker)
 
@@ -61,4 +73,3 @@ python app/main.py
 pip install -r requirements.txt pytest
 pytest
 ```
-

@@ -20,5 +20,7 @@ services:
       - dialout
     volumes:
       - ./config/config.yaml:/app/config/config.yaml:ro
+      - ./data:/app/data
     environment:
       - RPI_SEMIAUTOMATOR_CONFIG=/app/config/config.yaml
+      - RPI_SEMIAUTOMATOR_FAVORITES=/app/data/favorites.yaml
