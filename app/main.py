@@ -63,7 +63,8 @@ def build_port_card(device: str, baudrate: int):
 
             def download_log() -> None:
                 filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(device).name) or "serial"
-                ui.download("\n".join(list(connection.lines)), f"{filename}.log")
+                content = "\n".join(connection.lines).encode("utf-8")
+                ui.download(content, f"{filename}.log", media_type="text/plain; charset=utf-8")
 
             ui.button("Log herunterladen", on_click=download_log, icon="download").props(
                 "outline"
@@ -121,6 +122,7 @@ def build_port_card(device: str, baudrate: int):
                     return
                 try:
                     connection.send(text)
+                    log.push(f"TX → {text}")
                     command_input.value = ""
                 except Exception as exc:  # noqa: BLE001
                     ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
@@ -141,6 +143,7 @@ def build_port_card(device: str, baudrate: int):
                         def handler() -> None:
                             try:
                                 connection.send(m.command, raw=m.raw)
+                                log.push(f"TX → {m.command}")
                                 ui.notify(f"Makro '{m.label}' gesendet")
                             except Exception as exc:  # noqa: BLE001
                                 ui.notify(
@@ -154,13 +157,15 @@ def build_port_card(device: str, baudrate: int):
                     )
 
         def refresh() -> None:
-            status_badge.set_text("verbunden" if connection.is_open else "getrennt")
-            status_badge.props(
-                f"color={'green' if connection.is_open else 'red'}"
-            )
+            if connection.error:
+                status_badge.set_text("Fehler")
+                status_badge.props("color=orange")
+            else:
+                status_badge.set_text("verbunden" if connection.is_open else "getrennt")
+                status_badge.props(f"color={'green' if connection.is_open else 'red'}")
             new_lines = connection.lines[last_rendered_count["n"] :]
             for line in new_lines:
-                log.push(line)
+                log.push(f"RX ← {line}")
             last_rendered_count["n"] = len(connection.lines)
 
     return ui.timer(0.5, refresh)
@@ -171,46 +176,47 @@ def index() -> None:
     ui.label("RPI-SemiAutomator - Serielle Schnittstellen").classes(
         "text-2xl font-bold mb-4"
     )
-    options = _device_options()
-    interface_select = ui.select(
-        options=options,
-        label="Schnittstelle",
-    ).classes("w-full")
+    ui.label(
+        "Angezeigt werden serielle Geräte, nicht alle USB-Geräte aus lsusb."
+    ).classes("text-sm text-grey-6")
     ports_container = ui.column().classes("w-full gap-4")
-    page_state = {"device": None, "timer": None}
+    page_state = {"devices": [], "active_device": None, "timers": []}
 
-    def render_selected(device: str | None) -> None:
-        timer = page_state["timer"]
-        if timer is not None:
+    def render_terminals(devices: list[str], active_device: str | None = None) -> None:
+        for timer in page_state["timers"]:
             timer.cancel()
+        page_state["timers"] = []
         ports_container.clear()
-        page_state["device"] = device
-        page_state["timer"] = None
-        if device is None:
-            with ports_container:
-                ui.label("Bitte eine Schnittstelle auswählen.")
-            return
+        page_state["devices"] = devices
+        if active_device not in devices:
+            active_device = devices[0] if devices else None
+        page_state["active_device"] = active_device
+
         with ports_container:
-            baudrate = _known_devices().get(device, 115200)
-            page_state["timer"] = build_port_card(device, baudrate)
+            if not devices:
+                ui.label("Keine seriellen Schnittstellen gefunden.")
+                return
 
-    def select_interface(event) -> None:
-        render_selected(event.value)
+            with ui.tabs().classes("w-full") as tabs:
+                for device in devices:
+                    ui.tab(device, label=f"{_preset_name(device)} ({device})")
 
-    interface_select.on_value_change(select_interface)
-    render_selected(None)
+            tabs.value = active_device
+            tabs.on_value_change(
+                lambda event: page_state.update(active_device=event.value)
+            )
+            with ui.tab_panels(tabs, value=active_device).classes("w-full"):
+                for device in devices:
+                    with ui.tab_panel(device):
+                        baudrate = _known_devices().get(device, 115200)
+                        page_state["timers"].append(build_port_card(device, baudrate))
 
     def rescan() -> None:
-        current_device = interface_select.value
-        options = _device_options()
-        interface_select.options = options
-        if current_device is not None and current_device not in options:
-            current_device = next(iter(options), None)
-            interface_select.value = current_device
-        interface_select.update()
-        if current_device != page_state["device"]:
-            render_selected(current_device)
+        devices = list(_device_options())
+        if devices != page_state["devices"]:
+            render_terminals(devices, page_state["active_device"])
 
+    render_terminals(list(_device_options()))
     ui.timer(5.0, rescan)
 
 

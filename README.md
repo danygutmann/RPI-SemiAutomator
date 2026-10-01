@@ -8,9 +8,9 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 
 ## Funktionen
 
-- Auswahl aller konfigurierten sowie automatisch erkannten seriellen Ports per Dropdown
+- Serielle Ports werden automatisch erkannt und als getrennte Terminal-Tabs angezeigt
 - Verbinden/Trennen einzelner Ports mit einstellbarer Baudrate
-- Live-Log der empfangenen Daten je Port
+- Live-Log der gesendeten (`TX`) und empfangenen (`RX`) Daten je Port
 - Download des aktuellen Logs als lokale Textdatei
 - Freitext-Eingabe zum Senden beliebiger Befehle
 - Globale und schnittstellenspezifische Makro-Buttons
@@ -19,8 +19,7 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 
 ## Konfiguration
 
-Ports und Makros werden in [`config/config.yaml`](config/config.yaml)
-definiert:
+Ports und Makros werden in [`config/config.yaml`](config/config.yaml) definiert:
 
 ```yaml
 ports:
@@ -54,11 +53,13 @@ docker compose up --build
 Die Weboberfläche ist danach unter `http://<raspberry-pi-ip>:8080`
 erreichbar.
 
-Passe in [`docker-compose.yml`](docker-compose.yml) die Liste unter
-`devices:` an die tatsächlich verwendeten seriellen Schnittstellen deines
-Raspberry Pi an (`ls /dev/tty{USB,ACM}*` auf dem Host zeigt die verfügbaren
-Geräte). Die Ordnerbindung `./data:/app/data` bewahrt gespeicherte Favoriten
-über Container-Neustarts hinweg.
+Die Anwendung zeigt serielle Gerätedateien wie `/dev/ttyUSB*`, `/dev/ttyACM*`
+und `/dev/ttyAMA*` an. `lsusb` listet auch USB-Geräte auf, die keine serielle
+Schnittstelle bereitstellen; diese können nicht als serielle Terminals genutzt
+werden. Docker bindet `/dev` ein und begrenzt den Gerätezugriff über
+`device_cgroup_rules` auf die genannten seriellen Gerätetypen. Die
+Ordnerbindung `./data:/app/data` bewahrt gespeicherte Favoriten über
+Container-Neustarts hinweg.
 
 ## Lokale Entwicklung (ohne Docker)
 
