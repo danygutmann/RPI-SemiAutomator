@@ -475,7 +475,9 @@ def settings_page() -> None:
 
         def backup() -> None:
             content = backup_settings()
-            ui.download(content, "rpi-semiautomator-backup.yaml", media_type="text/yaml")
+            ui.download(
+                content, "rpi-semiautomator-backup.yaml", media_type="application/x-yaml"
+            )
             ui.notify("Backup wurde heruntergeladen", type="positive")
 
         def reload_settings() -> None:
