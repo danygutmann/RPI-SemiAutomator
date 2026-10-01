@@ -5,48 +5,68 @@ sending arbitrary input and triggering predefined "macro" commands.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Dict
 
 from nicegui import app, ui
 
-from config import Macro, PortPreset, load_config
+from config import Macro, PortPreset, load_config, load_favorites, save_favorite
 from serial_manager import SerialConnection, SerialManager
 
 config = load_config()
+favorites = load_favorites()
 manager = SerialManager()
-
-# Track which port "cards" have already been rendered in the UI so the
-# periodic refresh can pick up newly discovered devices.
-rendered_devices: Dict[str, ui.element] = {}
 
 
 def _known_devices() -> Dict[str, int]:
-    """Merge configured presets with auto-detected devices.
+    """Merge configured/favorite ports with currently detected devices.
 
     Returns a mapping of device path -> default baudrate.
     """
     devices: Dict[str, int] = {}
     for preset in config.ports:
         devices[preset.device] = preset.baudrate
+    for favorite in favorites:
+        devices[favorite.device] = favorite.baudrate
     for device in manager.list_available_devices():
         devices.setdefault(device, 115200)
+    for device, connection in manager.all().items():
+        devices.setdefault(device, connection.baudrate)
     return devices
 
 
 def _preset_name(device: str) -> str:
+    for favorite in favorites:
+        if favorite.device == device:
+            return favorite.name
     for preset in config.ports:
         if preset.device == device:
             return preset.name
     return device
 
 
-def build_port_card(device: str, baudrate: int) -> None:
+def _device_options() -> Dict[str, str]:
+    return {
+        device: f"{_preset_name(device)} ({device})"
+        for device in _known_devices()
+    }
+
+
+def build_port_card(device: str, baudrate: int):
     connection: SerialConnection = manager.get_or_create(device, baudrate)
 
     with ui.card().classes("w-full") as card:
         with ui.row().classes("items-center w-full justify-between"):
-            ui.label(f"{_preset_name(device)} ({device})").classes("text-lg font-bold")
+            ui.label(_device_options()[device]).classes("text-lg font-bold")
             status_badge = ui.badge("getrennt", color="red")
+            def download_log() -> None:
+                filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(device).name) or "serial"
+                ui.download("\n".join(list(connection.lines)), f"{filename}.log")
+
+            ui.button("Log herunterladen", on_click=download_log, icon="download").props(
+                "outline"
+            )
 
         with ui.row().classes("items-center w-full"):
             baud_input = ui.number(
@@ -70,6 +90,24 @@ def build_port_card(device: str, baudrate: int) -> None:
                 "outline"
             )
 
+            def save_as_favorite() -> None:
+                global favorites
+                try:
+                    favorite = PortPreset(
+                        name=_preset_name(device),
+                        device=device,
+                        baudrate=int(baud_input.value or connection.baudrate),
+                    )
+                    save_favorite(favorite)
+                    favorites = load_favorites()
+                    ui.notify(f"{device} als Favorit gespeichert", type="positive")
+                except Exception as exc:  # noqa: BLE001
+                    ui.notify(f"Favorit konnte nicht gespeichert werden: {exc}", type="negative")
+
+            ui.button("Als Favorit speichern", on_click=save_as_favorite, icon="star").props(
+                "outline"
+            )
+
         log = ui.log(max_lines=500).classes("w-full h-48")
         last_rendered_count = {"n": 0}
 
@@ -89,10 +127,15 @@ def build_port_card(device: str, baudrate: int) -> None:
             command_input.on("keydown.enter", lambda: send_command())
             ui.button("Senden", on_click=send_command, icon="send")
 
-        if config.macros:
+        macros = [
+            macro
+            for macro in config.macros
+            if macro.device is None or macro.device == device
+        ]
+        if macros:
             ui.label("Makros").classes("text-sm text-grey-6")
             with ui.row().classes("w-full flex-wrap"):
-                for macro in config.macros:
+                for macro in macros:
                     def make_handler(m: Macro):
                         def handler() -> None:
                             try:
@@ -119,15 +162,7 @@ def build_port_card(device: str, baudrate: int) -> None:
                 log.push(line)
             last_rendered_count["n"] = len(connection.lines)
 
-        ui.timer(0.5, refresh)
-
-    rendered_devices[device] = card
-
-
-def refresh_port_list() -> None:
-    for device, baudrate in _known_devices().items():
-        if device not in rendered_devices:
-            build_port_card(device, baudrate)
+    return ui.timer(0.5, refresh)
 
 
 @ui.page("/")
@@ -135,14 +170,45 @@ def index() -> None:
     ui.label("RPI-SemiAutomator - Serielle Schnittstellen").classes(
         "text-2xl font-bold mb-4"
     )
+    options = _device_options()
+    initial_device = next(iter(options), None)
+    interface_select = ui.select(
+        options=options,
+        value=initial_device,
+        label="Schnittstelle",
+    ).classes("w-full")
     ports_container = ui.column().classes("w-full gap-4")
+    page_state = {"device": None, "timer": None}
 
-    with ports_container:
-        refresh_port_list()
+    def render_selected(device: str | None) -> None:
+        timer = page_state["timer"]
+        if timer is not None:
+            timer.cancel()
+        ports_container.clear()
+        page_state["device"] = device
+        page_state["timer"] = None
+        if device is None:
+            return
+        with ports_container:
+            baudrate = _known_devices().get(device, 115200)
+            page_state["timer"] = build_port_card(device, baudrate)
+
+    def select_interface(event) -> None:
+        render_selected(event.value)
+
+    interface_select.on_value_change(select_interface)
+    render_selected(initial_device)
 
     def rescan() -> None:
-        with ports_container:
-            refresh_port_list()
+        current_device = interface_select.value
+        options = _device_options()
+        interface_select.options = options
+        if current_device not in options:
+            current_device = next(iter(options), None)
+            interface_select.value = current_device
+        interface_select.update()
+        if current_device != page_state["device"]:
+            render_selected(current_device)
 
     ui.timer(5.0, rescan)
 
