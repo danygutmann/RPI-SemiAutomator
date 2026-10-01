@@ -6,7 +6,7 @@ import pytest
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from config import load_config  # noqa: E402
+from config import load_config, load_favorites, save_favorite  # noqa: E402
 from serial_manager import SerialConnection, SerialManager  # noqa: E402
 
 
@@ -37,6 +37,7 @@ macros:
   - label: "Ping"
     command: "ping"
     raw: true
+    device: "/dev/ttyTEST0"
 """
     )
     config = load_config(custom)
@@ -45,6 +46,24 @@ macros:
     ]
     assert config.macros[0].label == "Ping"
     assert config.macros[0].raw is True
+    assert config.macros[0].device == "/dev/ttyTEST0"
+
+
+def test_save_favorite_adds_and_updates_port(tmp_path):
+    favorites_path = tmp_path / "favorites.yaml"
+    port_preset = __import__("config").PortPreset
+    save_favorite(
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600),
+        favorites_path,
+    )
+    save_favorite(
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=19200),
+        favorites_path,
+    )
+
+    assert load_favorites(favorites_path) == [
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=19200)
+    ]
 
 
 def test_serial_manager_get_or_create_is_idempotent():

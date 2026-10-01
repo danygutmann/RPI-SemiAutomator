@@ -1,6 +1,6 @@
-"""RPI-SemiAutomator - NiceGUI web UI for multiple serial interfaces.
+"""RPI-SemiAutomator - NiceGUI web UI for serial interfaces.
 
-Displays one panel per serial port, allows connecting/disconnecting,
+Provides a dropdown for available serial ports, connecting/disconnecting,
 sending arbitrary input and triggering predefined "macro" commands.
 """
 from __future__ import annotations
