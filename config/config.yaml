@@ -1,12 +1,14 @@
 # RPI-SemiAutomator configuration
 #
-# Defines the serial ports that should be available in the UI as well as
-# predefined "macro" commands that can be sent to a port with a single click.
+# Defines the serial ports that are offered as presets when adding a
+# favorite on the Settings page.
 #
 # Ports are not opened automatically - they are only listed as presets that
 # can be selected and connected to from the web UI. Additional ports found
-# on the system (e.g. plugged in USB-serial adapters) are also shown
-# automatically and can be connected to even if they are not listed here.
+# on the system (e.g. plugged in USB-serial adapters) are also offered as
+# presets automatically, even if they are not listed here. Only connections
+# that have been saved as a favorite (via the Settings page) are shown on the
+# start page.
 
 ports:
   - name: "USB0"
@@ -19,22 +21,6 @@ ports:
     device: "/dev/ttyACM0"
     baudrate: 115200
 
-# Macro buttons. Each macro sends `command` (a newline is appended
-# automatically unless `raw` is set to true, in which case the command is
-# sent exactly as specified, without any modification). Set `device` to a
-# serial device path to show a macro only for that interface; omit it to show
-# the macro for every interface.
-macros:
-  - label: "Status"
-    command: "status"
-  - label: "Reset"
-    command: "reset"
-  - label: "Version"
-    command: "version"
-  - label: "Help"
-    command: "help"
-  - label: "AT"
-    command: "AT"
-  # - label: "Device-specific action"
-  #   command: "device-command"
-  #   device: "/dev/ttyUSB0"
+# There are no predefined "macro" buttons anymore. Macros are created
+# individually from the web UI (per port or globally) and are stored in
+# data/macros.yaml.

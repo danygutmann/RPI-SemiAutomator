@@ -8,44 +8,52 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 
 ## Funktionen
 
-- Serielle Ports werden automatisch erkannt und als getrennte Terminal-Tabs angezeigt
+- Serielle Ports werden automatisch erkannt; auf der Startseite werden jedoch
+  nur Schnittstellen angezeigt, die zuvor als **Favorit** gespeichert wurden
 - Verbinden/Trennen einzelner Ports mit einstellbarer Baudrate
-- Live-Log der gesendeten (`TX`) und empfangenen (`RX`) Daten je Port, mit Button zum Leeren der Anzeige
+- Live-Log der gesendeten (`TX`) und empfangenen (`RX`) Daten je Port, mit Button zum Leeren der Anzeige; das Terminal-Fenster ist in der Höhe per Ziehen am unteren Rand verstellbar
 - Download des aktuellen Logs als lokale Textdatei
 - Freitext-Eingabe zum Senden beliebiger Befehle
-- Globale und schnittstellenspezifische Makro-Buttons
-- Schnittstellen mit selbst vergebenem Namen und Baudrate als Favoriten speichern
-- Übersicht der gespeicherten Favoriten (inkl. Entfernen) direkt auf der Startseite
+- Individuelle, selbst angelegte Makro-Buttons (global oder je Schnittstelle); es gibt keine vordefinierten Standard-Makros mehr
+- Eigene **Einstellungen**-Seite zum Hinzufügen/Entfernen von Favoriten sowie zum Sichern (Backup) und Neuladen der gespeicherten Einstellungen
 - Läuft als Docker-Container, geeignet für den Raspberry Pi
 
 ## Konfiguration
 
-Ports und Makros werden in [`config/config.yaml`](config/config.yaml) definiert:
+Die als Voreinstellung in der Einstellungen-Seite wählbaren Ports werden in
+[`config/config.yaml`](config/config.yaml) definiert:
 
 ```yaml
 ports:
   - name: "USB0"
     device: "/dev/ttyUSB0"
     baudrate: 115200
-
-macros:
-  - label: "Status"
-    command: "status"
-  - label: "USB0 zurücksetzen"
-    command: "reset"
-    device: "/dev/ttyUSB0"
 ```
 
 Der Pfad zur Konfigurationsdatei kann über die Umgebungsvariable
 `RPI_SEMIAUTOMATOR_CONFIG` überschrieben werden.
-Makros ohne `device` werden für alle Schnittstellen angezeigt; mit `device`
-erscheinen sie nur bei der angegebenen Schnittstelle. In der Weboberfläche
-kann die Baudrate angepasst werden; über **Als Favorit speichern** öffnet sich
-ein Dialog, in dem ein eigener Name für die Schnittstelle vergeben werden
-kann. Favoriten werden in `data/favorites.yaml` gespeichert (alternativ über
-`RPI_SEMIAUTOMATOR_FAVORITES`) und erscheinen in der aufklappbaren
-**Favoriten**-Liste auf der Startseite sowie mit einem Stern (★) im
-jeweiligen Terminal-Tab; von dort können sie auch wieder entfernt werden.
+
+Auf der **Einstellungen**-Seite (erreichbar über den Button oben rechts) kann
+eine Schnittstelle (aus den konfigurierten Ports oder aktuell erkannten
+Geräten) mit eigenem Namen und Baudrate als **Favorit** gespeichert werden;
+nur Favoriten werden auf der Startseite als Terminal-Tabs angezeigt.
+Favoriten werden in `data/favorites.yaml` gespeichert (alternativ über
+`RPI_SEMIAUTOMATOR_FAVORITES`) und können auf der Einstellungen-Seite auch
+wieder entfernt werden.
+
+Makros werden ausschließlich individuell über das Terminal einer
+Schnittstelle angelegt (Button **+** neben den Makros) und in
+`data/macros.yaml` gespeichert (alternativ über
+`RPI_SEMIAUTOMATOR_MACROS`); ein Makro kann global oder nur für die
+Schnittstelle gelten, bei der es angelegt wurde. Es gibt keine
+vordefinierten Standard-Makros.
+
+Auf der Einstellungen-Seite steht außerdem ein **Backup herunterladen**-Button
+zur Verfügung, der die aktuell gespeicherten Favoriten und Makros als eine
+YAML-Datei exportiert, sowie ein **Einstellungen neu laden**-Button, der
+Favoriten und Makros erneut von der Festplatte einliest (z. B. nachdem die
+Dateien extern verändert oder aus einem Backup wiederhergestellt wurden).
+
 Beim Download enthält die Logdatei die aktuell im Speicher verfügbaren
 empfangenen Zeilen; der Button **Anzeige leeren** setzt die Anzeige und den
 Zwischenspeicher eines Ports zurück.
