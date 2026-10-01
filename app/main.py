@@ -56,10 +56,11 @@ def _device_options() -> Dict[str, str]:
 def build_port_card(device: str, baudrate: int):
     connection: SerialConnection = manager.get_or_create(device, baudrate)
 
-    with ui.card().classes("w-full") as card:
+    with ui.card().classes("w-full"):
         with ui.row().classes("items-center w-full justify-between"):
             ui.label(_device_options()[device]).classes("text-lg font-bold")
             status_badge = ui.badge("getrennt", color="red")
+
             def download_log() -> None:
                 filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(device).name) or "serial"
                 ui.download("\n".join(list(connection.lines)), f"{filename}.log")
@@ -171,10 +172,8 @@ def index() -> None:
         "text-2xl font-bold mb-4"
     )
     options = _device_options()
-    initial_device = next(iter(options), None)
     interface_select = ui.select(
         options=options,
-        value=initial_device,
         label="Schnittstelle",
     ).classes("w-full")
     ports_container = ui.column().classes("w-full gap-4")
@@ -188,6 +187,8 @@ def index() -> None:
         page_state["device"] = device
         page_state["timer"] = None
         if device is None:
+            with ports_container:
+                ui.label("Bitte eine Schnittstelle auswählen.")
             return
         with ports_container:
             baudrate = _known_devices().get(device, 115200)
@@ -197,13 +198,13 @@ def index() -> None:
         render_selected(event.value)
 
     interface_select.on_value_change(select_interface)
-    render_selected(initial_device)
+    render_selected(None)
 
     def rescan() -> None:
         current_device = interface_select.value
         options = _device_options()
         interface_select.options = options
-        if current_device not in options:
+        if current_device is not None and current_device not in options:
             current_device = next(iter(options), None)
             interface_select.value = current_device
         interface_select.update()
