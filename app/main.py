@@ -1,7 +1,8 @@
 """RPI-SemiAutomator - NiceGUI web UI for serial interfaces.
 
 Provides a dropdown for available serial ports, connecting/disconnecting,
-sending arbitrary input and triggering predefined "macro" commands.
+sending arbitrary input and triggering individually created "macro"
+commands.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from nicegui import app, ui
 from config import (
     Macro,
     PortPreset,
+    backup_settings,
     load_config,
     load_favorites,
     load_macros,
@@ -56,10 +58,6 @@ def _preset_name(device: str) -> str:
     return device
 
 
-def _is_favorite(device: str) -> bool:
-    return any(favorite.device == device for favorite in favorites)
-
-
 def _device_options() -> Dict[str, str]:
     return {
         device: f"{_preset_name(device)} ({device})"
@@ -67,9 +65,15 @@ def _device_options() -> Dict[str, str]:
     }
 
 
+def _favorite_devices() -> list[str]:
+    """Device paths of all saved favorites, in the order they were saved."""
+    return [favorite.device for favorite in favorites]
+
+
 def _macros_for(device: str) -> list[Macro]:
-    all_macros = config.macros + user_macros
-    return [macro for macro in all_macros if macro.device is None or macro.device == device]
+    # Only individually created macros are shown; there are no predefined
+    # "standard" macros anymore.
+    return [macro for macro in user_macros if macro.device is None or macro.device == device]
 
 
 def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite_saved=None):
@@ -147,7 +151,9 @@ def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite
                 "Als Favorit speichern", on_click=open_favorite_dialog, icon="star"
             ).props("outline")
 
-        log = ui.log(max_lines=500).classes("w-full flex-grow")
+        log = ui.log(max_lines=500).classes("w-full flex-grow").style(
+            "resize: vertical; overflow: auto; min-height: 150px;"
+        )
         last_rendered_count = {"n": 0}
 
         with ui.row().classes("w-full justify-end shrink-0"):
@@ -274,46 +280,36 @@ def index() -> None:
     }
 
     with ui.header().classes("items-center justify-between").props("bordered"):
-        ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat color=white round")
-        ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
+        with ui.row().classes("items-center"):
+            ui.button(icon="menu", on_click=lambda: drawer.toggle()).props(
+                "flat color=white round"
+            )
+            ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
+        ui.button(
+            "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
+        ).props("flat color=white")
 
     with ui.left_drawer(value=True, bordered=True) as drawer:
         ui.label("Favoriten").classes("text-sm font-semibold text-grey-6")
-        favorites_container = ui.column().classes("w-full gap-1 mb-2")
+        favorites_container = ui.column().classes("w-full gap-1")
 
         def render_favorites() -> None:
             favorites_container.clear()
             if not favorites:
                 with favorites_container:
-                    ui.label("Keine Favoriten.").classes("text-xs text-grey-6")
+                    ui.label(
+                        "Keine Favoriten. Unter Einstellungen hinzufügen."
+                    ).classes("text-xs text-grey-6")
                 return
             with favorites_container:
                 for favorite in list(favorites):
-                    with ui.row().classes("items-center w-full justify-between"):
-                        ui.label(f"{favorite.name} ({favorite.baudrate} Baud)").classes(
-                            "text-sm"
-                        )
-
-                        def make_remove(dev: str = favorite.device):
-                            def _remove() -> None:
-                                remove_favorite(dev)
-                                favorites.clear()
-                                favorites.extend(load_favorites())
-                                render_favorites()
-                                render_terminals(
-                                    list(_device_options()), page_state["active_device"]
-                                )
-                                ui.notify(f"{dev} aus Favoriten entfernt", type="info")
-
-                            return _remove
-
-                        ui.button(icon="close", on_click=make_remove()).props(
-                            "flat dense round"
-                        )
-
-        ui.separator()
-        ui.label("Schnittstellen").classes("text-sm font-semibold text-grey-6")
-        devices_container = ui.column().classes("w-full gap-1")
+                    is_active = favorite.device == page_state["active_device"]
+                    ui.button(
+                        f"★ {favorite.name} ({favorite.device})",
+                        on_click=lambda d=favorite.device: select_device(d),
+                    ).props(
+                        f"{'unelevated' if is_active else 'flat'} align=left no-caps"
+                    ).classes("w-full")
 
     with ui.column().classes("w-full h-full gap-2 p-2"):
         tabs_row = ui.row().classes("w-full shrink-0")
@@ -327,34 +323,20 @@ def index() -> None:
                 page_state["active_timer"].cancel()
                 page_state["active_timer"] = None
             panel_container.clear()
-            render_device_list(page_state["devices"])
+            render_favorites()
             with panel_container:
                 with ui.column().classes("w-full h-full"):
                     baudrate = _known_devices().get(device, 115200)
 
                     def on_macro_saved() -> None:
-                        render_terminals(list(_device_options()), page_state["active_device"])
+                        render_terminals(_favorite_devices(), page_state["active_device"])
 
                     def on_favorite_saved() -> None:
-                        render_favorites()
-                        render_terminals(list(_device_options()), page_state["active_device"])
+                        render_terminals(_favorite_devices(), page_state["active_device"])
 
                     page_state["active_timer"] = build_port_card(
                         device, baudrate, on_macro_saved, on_favorite_saved
                     )
-
-        def render_device_list(devices: list[str]) -> None:
-            devices_container.clear()
-            with devices_container:
-                for device in devices:
-                    star = "★ " if _is_favorite(device) else ""
-                    is_active = device == page_state["active_device"]
-                    ui.button(
-                        f"{star}{_preset_name(device)} ({device})",
-                        on_click=lambda d=device: select_device(d),
-                    ).props(
-                        f"{'unelevated' if is_active else 'flat'} align=left no-caps"
-                    ).classes("w-full")
 
         def render_terminals(devices: list[str], active_device: str | None = None) -> None:
             if page_state["active_timer"] is not None:
@@ -368,16 +350,18 @@ def index() -> None:
             if active_device not in devices:
                 active_device = devices[0] if devices else None
 
-            render_device_list(devices)
+            render_favorites()
 
             with tabs_row:
                 if not devices:
-                    ui.label("Keine seriellen Schnittstellen gefunden.")
+                    ui.label(
+                        "Keine Favoriten. Unter Einstellungen Favoriten hinzufügen."
+                    )
+                    page_state["active_device"] = None
                     return
                 with ui.tabs().classes("w-full") as tabs:
                     for device in devices:
-                        star = "★ " if _is_favorite(device) else ""
-                        ui.tab(device, label=f"{star}{_preset_name(device)} ({device})")
+                        ui.tab(device, label=f"★ {_preset_name(device)} ({device})")
                 tabs.value = active_device
                 tabs.on_value_change(lambda event: select_device(event.value))
                 page_state["tabs"] = tabs
@@ -387,13 +371,128 @@ def index() -> None:
                 select_device(active_device)
 
         def rescan() -> None:
-            devices = list(_device_options())
+            devices = _favorite_devices()
             if devices != page_state["devices"]:
                 render_terminals(devices, page_state["active_device"])
 
-        render_favorites()
-        render_terminals(list(_device_options()))
+        render_terminals(_favorite_devices())
         ui.timer(5.0, rescan)
+
+
+@ui.page("/settings")
+def settings_page() -> None:
+    ui.add_head_html(
+        "<style>html, body, #app, .nicegui-content { height: 100%; }</style>"
+    )
+
+    with ui.header().classes("items-center justify-between").props("bordered"):
+        with ui.row().classes("items-center"):
+            ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
+                "flat color=white round"
+            )
+            ui.label("Einstellungen").classes("text-lg font-semibold")
+
+    with ui.column().classes("w-full max-w-2xl mx-auto gap-4 p-4"):
+        ui.label("Favorit hinzufügen").classes("text-lg font-bold")
+        with ui.row().classes("w-full items-end gap-2"):
+            device_select = ui.select(
+                options=_device_options(), label="Schnittstelle", with_input=True
+            ).classes("flex-grow")
+            new_name_input = ui.input(label="Name").classes("w-40")
+            new_baud_input = ui.number(
+                label="Baudrate", value=115200, min=110, max=4000000
+            ).classes("w-32")
+
+        favorites_list_container = ui.column().classes("w-full gap-1")
+
+        def render_favorites_list() -> None:
+            device_select.options = _device_options()
+            device_select.update()
+            favorites_list_container.clear()
+            if not favorites:
+                with favorites_list_container:
+                    ui.label("Keine Favoriten.").classes("text-sm text-grey-6")
+                return
+            with favorites_list_container:
+                for favorite in list(favorites):
+                    with ui.row().classes("items-center w-full justify-between"):
+                        ui.label(
+                            f"{favorite.name} — {favorite.device} "
+                            f"({favorite.baudrate} Baud)"
+                        ).classes("text-sm")
+
+                        def make_remove(dev: str = favorite.device):
+                            def _remove() -> None:
+                                remove_favorite(dev)
+                                favorites.clear()
+                                favorites.extend(load_favorites())
+                                render_favorites_list()
+                                ui.notify(f"{dev} aus Favoriten entfernt", type="info")
+
+                            return _remove
+
+                        ui.button(icon="delete", on_click=make_remove()).props(
+                            "flat dense round"
+                        )
+
+        def add_favorite() -> None:
+            device = device_select.value
+            if not device:
+                ui.notify("Bitte eine Schnittstelle auswählen", type="warning")
+                return
+            try:
+                name = (new_name_input.value or _preset_name(device)).strip() or device
+                favorite = PortPreset(
+                    name=name,
+                    device=device,
+                    baudrate=int(new_baud_input.value or 115200),
+                )
+                save_favorite(favorite)
+                favorites.clear()
+                favorites.extend(load_favorites())
+                device_select.value = None
+                new_name_input.value = ""
+                new_baud_input.value = 115200
+                render_favorites_list()
+                ui.notify(f"'{name}' als Favorit gespeichert", type="positive")
+            except Exception as exc:  # noqa: BLE001
+                ui.notify(
+                    f"Favorit konnte nicht gespeichert werden: {exc}", type="negative"
+                )
+
+        ui.button("Favorit hinzufügen", on_click=add_favorite, icon="star").props("outline")
+
+        ui.separator()
+        ui.label("Gespeicherte Favoriten").classes("text-lg font-bold")
+        render_favorites_list()
+
+        ui.separator()
+        ui.label("Daten").classes("text-lg font-bold")
+        ui.label(
+            "Favoriten und individuelle Makros sichern oder nach einer "
+            "externen Änderung neu laden."
+        ).classes("text-sm text-grey-6")
+
+        def backup() -> None:
+            content = backup_settings()
+            ui.download(content, "rpi-semiautomator-backup.yaml", media_type="text/yaml")
+            ui.notify("Backup wurde heruntergeladen", type="positive")
+
+        def reload_settings() -> None:
+            favorites.clear()
+            favorites.extend(load_favorites())
+            user_macros.clear()
+            user_macros.extend(load_macros())
+            render_favorites_list()
+            ui.notify("Einstellungen wurden neu geladen", type="positive")
+
+        with ui.row().classes("gap-2"):
+            ui.button("Backup herunterladen", on_click=backup, icon="download").props(
+                "outline"
+            )
+            ui.button(
+                "Einstellungen neu laden", on_click=reload_settings, icon="refresh"
+            ).props("outline")
 
 
 @app.on_shutdown

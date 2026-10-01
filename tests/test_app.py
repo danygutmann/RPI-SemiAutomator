@@ -2,11 +2,13 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_DIR))
 
 from config import (  # noqa: E402
+    backup_settings,
     load_config,
     load_favorites,
     load_macros,
@@ -23,9 +25,9 @@ def test_load_config_reads_default_file():
     config = load_config()
     assert len(config.ports) >= 1
     assert all(preset.device.startswith("/dev/") for preset in config.ports)
-    assert len(config.macros) >= 1
-    assert all(macro.label for macro in config.macros)
-    assert any(macro.label == "AT" and macro.command == "AT" for macro in config.macros)
+    # The default configuration no longer ships predefined ("standard")
+    # macros; only individually created macros (stored separately) exist.
+    assert config.macros == []
 
 
 def test_load_config_missing_file_returns_empty(tmp_path):
@@ -154,6 +156,27 @@ def test_remove_macro_missing_entry_is_noop(tmp_path):
     remove_macro("DoesNotExist", path=macros_path)
 
     assert load_macros(macros_path) == [macro(label="Ping", command="ping")]
+
+
+def test_backup_settings_includes_favorites_and_macros(tmp_path):
+    favorites_path = tmp_path / "favorites.yaml"
+    macros_path = tmp_path / "macros.yaml"
+    port_preset = __import__("config").PortPreset
+    macro = __import__("config").Macro
+    save_favorite(
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600), favorites_path
+    )
+    save_macro(macro(label="Ping", command="ping"), macros_path)
+
+    content = backup_settings(favorites_path, macros_path)
+    data = yaml.safe_load(content)
+
+    assert data["favorites"] == [
+        {"name": "Test", "device": "/dev/ttyTEST0", "baudrate": 9600}
+    ]
+    assert data["macros"] == [
+        {"label": "Ping", "command": "ping", "raw": False, "device": None}
+    ]
 
 
 def test_serial_manager_get_or_create_is_idempotent():

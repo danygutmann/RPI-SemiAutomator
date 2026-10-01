@@ -213,3 +213,31 @@ def remove_macro(label: str, device: str | None = None, path: Path | None = None
         macros = {_macro_key(existing): existing for existing in load_macros(macros_path)}
         macros.pop((device, label), None)
         _write_macros(macros, macros_path)
+
+
+def backup_settings(
+    favorites_path: Path | None = None, macros_path: Path | None = None
+) -> bytes:
+    """Return a single YAML document bundling the current favorites and macros.
+
+    Used by the Settings page to let the user download a backup of all
+    user-editable settings (favorites and individual macros).
+    """
+    favorites = load_favorites(favorites_path)
+    macros = load_macros(macros_path)
+    payload = {
+        "favorites": [
+            {"name": favorite.name, "device": favorite.device, "baudrate": favorite.baudrate}
+            for favorite in favorites
+        ],
+        "macros": [
+            {
+                "label": macro.label,
+                "command": macro.command,
+                "raw": macro.raw,
+                "device": macro.device,
+            }
+            for macro in macros
+        ],
+    }
+    return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).encode("utf-8")
