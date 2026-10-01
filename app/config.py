@@ -107,26 +107,39 @@ def load_favorites(path: Path | None = None) -> List[PortPreset]:
     ]
 
 
+def _write_favorites(favorites: dict[str, PortPreset], favorites_path: Path) -> None:
+    favorites_path.parent.mkdir(parents=True, exist_ok=True)
+    with favorites_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(
+            {
+                "ports": [
+                    {
+                        "name": favorite.name,
+                        "device": favorite.device,
+                        "baudrate": favorite.baudrate,
+                    }
+                    for favorite in favorites.values()
+                ]
+            },
+            handle,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+
 def save_favorite(preset: PortPreset, path: Path | None = None) -> None:
     """Add or update one favorite in the writable user configuration."""
     favorites_path = path or _favorites_path()
     with _favorites_lock:
         favorites = {favorite.device: favorite for favorite in load_favorites(favorites_path)}
         favorites[preset.device] = preset
-        favorites_path.parent.mkdir(parents=True, exist_ok=True)
-        with favorites_path.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(
-                {
-                    "ports": [
-                        {
-                            "name": favorite.name,
-                            "device": favorite.device,
-                            "baudrate": favorite.baudrate,
-                        }
-                        for favorite in favorites.values()
-                    ]
-                },
-                handle,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+        _write_favorites(favorites, favorites_path)
+
+
+def remove_favorite(device: str, path: Path | None = None) -> None:
+    """Remove one favorite (by device path) from the writable user configuration."""
+    favorites_path = path or _favorites_path()
+    with _favorites_lock:
+        favorites = {favorite.device: favorite for favorite in load_favorites(favorites_path)}
+        favorites.pop(device, None)
+        _write_favorites(favorites, favorites_path)

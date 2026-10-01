@@ -6,7 +6,7 @@ import pytest
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from config import load_config, load_favorites, save_favorite  # noqa: E402
+from config import load_config, load_favorites, remove_favorite, save_favorite  # noqa: E402
 import serial_manager as serial_manager_module  # noqa: E402
 from serial_manager import SerialConnection, SerialManager  # noqa: E402
 
@@ -17,6 +17,7 @@ def test_load_config_reads_default_file():
     assert all(preset.device.startswith("/dev/") for preset in config.ports)
     assert len(config.macros) >= 1
     assert all(macro.label for macro in config.macros)
+    assert any(macro.label == "AT" and macro.command == "AT" for macro in config.macros)
 
 
 def test_load_config_missing_file_returns_empty(tmp_path):
@@ -64,6 +65,40 @@ def test_save_favorite_adds_and_updates_port(tmp_path):
 
     assert load_favorites(favorites_path) == [
         port_preset(name="Test", device="/dev/ttyTEST0", baudrate=19200)
+    ]
+
+
+def test_remove_favorite_deletes_entry(tmp_path):
+    favorites_path = tmp_path / "favorites.yaml"
+    port_preset = __import__("config").PortPreset
+    save_favorite(
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600),
+        favorites_path,
+    )
+    save_favorite(
+        port_preset(name="Other", device="/dev/ttyTEST1", baudrate=9600),
+        favorites_path,
+    )
+
+    remove_favorite("/dev/ttyTEST0", favorites_path)
+
+    assert load_favorites(favorites_path) == [
+        port_preset(name="Other", device="/dev/ttyTEST1", baudrate=9600)
+    ]
+
+
+def test_remove_favorite_missing_device_is_noop(tmp_path):
+    favorites_path = tmp_path / "favorites.yaml"
+    port_preset = __import__("config").PortPreset
+    save_favorite(
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600),
+        favorites_path,
+    )
+
+    remove_favorite("/dev/ttyDOES-NOT-EXIST", favorites_path)
+
+    assert load_favorites(favorites_path) == [
+        port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600)
     ]
 
 

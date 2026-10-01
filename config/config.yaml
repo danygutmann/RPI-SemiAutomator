@@ -33,6 +33,8 @@ macros:
     command: "version"
   - label: "Help"
     command: "help"
+  - label: "AT"
+    command: "AT"
   # - label: "Device-specific action"
   #   command: "device-command"
   #   device: "/dev/ttyUSB0"

@@ -10,11 +10,12 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 
 - Serielle Ports werden automatisch erkannt und als getrennte Terminal-Tabs angezeigt
 - Verbinden/Trennen einzelner Ports mit einstellbarer Baudrate
-- Live-Log der gesendeten (`TX`) und empfangenen (`RX`) Daten je Port
+- Live-Log der gesendeten (`TX`) und empfangenen (`RX`) Daten je Port, mit Button zum Leeren der Anzeige
 - Download des aktuellen Logs als lokale Textdatei
 - Freitext-Eingabe zum Senden beliebiger Befehle
 - Globale und schnittstellenspezifische Makro-Buttons
-- Schnittstellen mit Baudrate als Favoriten speichern
+- Schnittstellen mit selbst vergebenem Namen und Baudrate als Favoriten speichern
+- Übersicht der gespeicherten Favoriten (inkl. Entfernen) direkt auf der Startseite
 - Läuft als Docker-Container, geeignet für den Raspberry Pi
 
 ## Konfiguration
@@ -39,10 +40,15 @@ Der Pfad zur Konfigurationsdatei kann über die Umgebungsvariable
 `RPI_SEMIAUTOMATOR_CONFIG` überschrieben werden.
 Makros ohne `device` werden für alle Schnittstellen angezeigt; mit `device`
 erscheinen sie nur bei der angegebenen Schnittstelle. In der Weboberfläche
-kann die Baudrate angepasst und die Schnittstelle über **Als Favorit speichern**
-dauerhaft gemerkt werden. Favoriten werden in `data/favorites.yaml` gespeichert
-(alternativ über `RPI_SEMIAUTOMATOR_FAVORITES`). Beim Download enthält die
-Logdatei die aktuell im Speicher verfügbaren empfangenen Zeilen.
+kann die Baudrate angepasst werden; über **Als Favorit speichern** öffnet sich
+ein Dialog, in dem ein eigener Name für die Schnittstelle vergeben werden
+kann. Favoriten werden in `data/favorites.yaml` gespeichert (alternativ über
+`RPI_SEMIAUTOMATOR_FAVORITES`) und erscheinen in der aufklappbaren
+**Favoriten**-Liste auf der Startseite sowie mit einem Stern (★) im
+jeweiligen Terminal-Tab; von dort können sie auch wieder entfernt werden.
+Beim Download enthält die Logdatei die aktuell im Speicher verfügbaren
+empfangenen Zeilen; der Button **Anzeige leeren** setzt die Anzeige und den
+Zwischenspeicher eines Ports zurück.
 
 ## Start mit Docker
 
