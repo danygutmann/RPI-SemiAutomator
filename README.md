@@ -88,3 +88,17 @@ python app/main.py
 pip install -r requirements.txt pytest
 pytest
 ```
+
+## Dark mode, Fenstergröße, Makros
+
+- Dunkelmodus per Button im Header (wird pro Browser gespeichert).
+- Die Höhe der Konsole (Log) wird pro Schnittstelle im Browser gespeichert.
+- Unter Einstellungen können Favoriten (Name/Baudrate) und Makros bearbeitet und gelöscht werden.
+
+## API
+
+Optional absicherbar mit `RPI_SEMIAUTOMATOR_API_TOKEN` (Bearer-Token im `Authorization`-Header oder `?token=`).
+
+- `GET /api/ports` – Schnittstellen und Status
+- `POST /api/send` – `{"device": "/dev/ttyUSB0", "command": "...", "raw": false}`
+- `WS /api/ws?device=/dev/ttyUSB0` – streamt `{"direction": "rx"|"tx", "text": "..."}`; Text oder `{"command": "..."}` senden
