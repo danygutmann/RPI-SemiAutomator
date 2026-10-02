@@ -6,10 +6,14 @@ commands.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 import re
 from pathlib import Path
 from typing import Dict
 
+from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
 from nicegui import app, ui
 
 from config import (
@@ -20,8 +24,10 @@ from config import (
     load_favorites,
     load_macros,
     remove_favorite,
+    remove_macro,
     save_favorite,
     save_macro,
+    update_macro,
 )
 from serial_manager import SerialConnection, SerialManager
 
@@ -29,6 +35,19 @@ config = load_config()
 favorites = load_favorites()
 user_macros = load_macros()
 manager = SerialManager()
+
+
+def _setup_dark_mode() -> None:
+    """Apply the persisted dark-mode choice and add a toggle to the header."""
+    dark = ui.dark_mode(bool(app.storage.user.get("dark", False)))
+
+    def toggle() -> None:
+        dark.toggle()
+        app.storage.user["dark"] = bool(dark.value)
+
+    ui.button(icon="dark_mode", on_click=toggle).props("flat color=white round").tooltip(
+        "Hell/Dunkel umschalten"
+    )
 
 
 def _known_devices() -> Dict[str, int]:
@@ -153,6 +172,23 @@ def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite
 
         log = ui.log(max_lines=500).classes("w-full flex-grow").style(
             "resize: vertical; overflow: auto; min-height: 150px;"
+        )
+        size_key = json.dumps(f"rpi-semiautomator-logheight:{device}")
+        ui.run_javascript(
+            f"""
+            const el = document.getElementById('c{log.id}');
+            if (el) {{
+                const saved = localStorage.getItem({size_key});
+                if (saved) el.style.height = saved;
+                let timer = null;
+                new ResizeObserver(() => {{
+                    clearTimeout(timer);
+                    timer = setTimeout(() => {{
+                        if (el.style.height) localStorage.setItem({size_key}, el.style.height);
+                    }}, 300);
+                }}).observe(el);
+            }}
+            """
         )
         last_rendered_count = {"n": 0}
 
@@ -285,9 +321,11 @@ def index() -> None:
                 "flat color=white round"
             )
             ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
-        ui.button(
-            "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
-        ).props("flat color=white")
+        with ui.row().classes("items-center"):
+            _setup_dark_mode()
+            ui.button(
+                "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
+            ).props("flat color=white")
 
     with ui.left_drawer(value=True, bordered=True) as drawer:
         ui.label("Favoriten").classes("text-sm font-semibold text-grey-6")
@@ -391,6 +429,7 @@ def settings_page() -> None:
                 "flat color=white round"
             )
             ui.label("Einstellungen").classes("text-lg font-semibold")
+        _setup_dark_mode()
 
     with ui.column().classes("w-full max-w-2xl mx-auto gap-4 p-4"):
         ui.label("Favorit hinzufügen").classes("text-lg font-bold")
@@ -421,6 +460,37 @@ def settings_page() -> None:
                             f"({favorite.baudrate} Baud)"
                         ).classes("text-sm")
 
+                        def make_edit(fav: PortPreset = favorite):
+                            def _edit() -> None:
+                                with ui.dialog() as dialog, ui.card():
+                                    ui.label("Favorit bearbeiten").classes("text-lg font-bold")
+                                    name_input = ui.input(label="Name", value=fav.name).classes("w-64")
+                                    baud_input = ui.number(
+                                        label="Baudrate", value=fav.baudrate, min=110, max=4000000
+                                    ).classes("w-64")
+
+                                    def save() -> None:
+                                        name = (name_input.value or "").strip() or fav.device
+                                        save_favorite(
+                                            PortPreset(
+                                                name=name,
+                                                device=fav.device,
+                                                baudrate=int(baud_input.value or fav.baudrate),
+                                            )
+                                        )
+                                        favorites.clear()
+                                        favorites.extend(load_favorites())
+                                        dialog.close()
+                                        render_favorites_list()
+                                        ui.notify(f"'{name}' gespeichert", type="positive")
+
+                                    with ui.row().classes("justify-end w-full gap-2"):
+                                        ui.button("Abbrechen", on_click=dialog.close).props("flat")
+                                        ui.button("Speichern", on_click=save, icon="save")
+                                dialog.open()
+
+                            return _edit
+
                         def make_remove(dev: str = favorite.device):
                             def _remove() -> None:
                                 remove_favorite(dev)
@@ -431,9 +501,13 @@ def settings_page() -> None:
 
                             return _remove
 
-                        ui.button(icon="delete", on_click=make_remove()).props(
-                            "flat dense round"
-                        )
+                        with ui.row().classes("gap-0"):
+                            ui.button(icon="edit", on_click=make_edit()).props(
+                                "flat dense round"
+                            )
+                            ui.button(icon="delete", on_click=make_remove()).props(
+                                "flat dense round"
+                            )
 
         def add_favorite() -> None:
             device = device_select.value
@@ -467,6 +541,89 @@ def settings_page() -> None:
         render_favorites_list()
 
         ui.separator()
+        ui.label("Makrotasten").classes("text-lg font-bold")
+        macros_list_container = ui.column().classes("w-full gap-1")
+
+        def render_macros_list() -> None:
+            macros_list_container.clear()
+            with macros_list_container:
+                if not user_macros:
+                    ui.label("Keine Makros.").classes("text-sm text-grey-6")
+                    return
+                for macro in list(user_macros):
+                    scope = macro.device or "alle Schnittstellen"
+                    with ui.row().classes("items-center w-full justify-between"):
+                        ui.label(f"{macro.label} — {macro.command} ({scope})").classes(
+                            "text-sm"
+                        )
+
+                        def make_edit_macro(m: Macro = macro):
+                            def _edit() -> None:
+                                with ui.dialog() as dialog, ui.card():
+                                    ui.label("Makro bearbeiten").classes("text-lg font-bold")
+                                    name_input = ui.input(label="Name", value=m.label).classes("w-64")
+                                    command_input = ui.input(
+                                        label="Kommando", value=m.command
+                                    ).classes("w-64")
+                                    device_select = ui.select(
+                                        options={"": "Alle Schnittstellen", **_device_options()},
+                                        label="Schnittstelle",
+                                        value=m.device or "",
+                                    ).classes("w-64")
+
+                                    def save() -> None:
+                                        name = (name_input.value or "").strip()
+                                        command = (command_input.value or "").strip()
+                                        if not name or not command:
+                                            ui.notify(
+                                                "Name und Kommando sind erforderlich",
+                                                type="warning",
+                                            )
+                                            return
+                                        update_macro(
+                                            m.label,
+                                            m.device,
+                                            Macro(
+                                                label=name,
+                                                command=command,
+                                                raw=m.raw,
+                                                device=device_select.value or None,
+                                            ),
+                                        )
+                                        user_macros.clear()
+                                        user_macros.extend(load_macros())
+                                        dialog.close()
+                                        render_macros_list()
+                                        ui.notify(f"Makro '{name}' gespeichert", type="positive")
+
+                                    with ui.row().classes("justify-end w-full gap-2"):
+                                        ui.button("Abbrechen", on_click=dialog.close).props("flat")
+                                        ui.button("Speichern", on_click=save, icon="save")
+                                dialog.open()
+
+                            return _edit
+
+                        def make_delete_macro(m: Macro = macro):
+                            def _delete() -> None:
+                                remove_macro(m.label, m.device)
+                                user_macros.clear()
+                                user_macros.extend(load_macros())
+                                render_macros_list()
+                                ui.notify(f"Makro '{m.label}' gelöscht", type="info")
+
+                            return _delete
+
+                        with ui.row().classes("gap-0"):
+                            ui.button(icon="edit", on_click=make_edit_macro()).props(
+                                "flat dense round"
+                            )
+                            ui.button(icon="delete", on_click=make_delete_macro()).props(
+                                "flat dense round"
+                            )
+
+        render_macros_list()
+
+        ui.separator()
         ui.label("Daten").classes("text-lg font-bold")
         ui.label(
             "Favoriten und individuelle Makros sichern oder nach einer "
@@ -486,6 +643,7 @@ def settings_page() -> None:
             user_macros.clear()
             user_macros.extend(load_macros())
             render_favorites_list()
+            render_macros_list()
             ui.notify("Einstellungen wurden neu geladen", type="positive")
 
         with ui.row().classes("gap-2"):
@@ -497,10 +655,126 @@ def settings_page() -> None:
             ).props("outline")
 
 
+def _check_api_token(token: str | None) -> None:
+    """Enforce the optional ``RPI_SEMIAUTOMATOR_API_TOKEN`` for API access."""
+    expected = os.environ.get("RPI_SEMIAUTOMATOR_API_TOKEN")
+    if expected and token != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+
+
+def _bearer(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return request.query_params.get("token")
+
+
+def _api_connection(device: str) -> SerialConnection:
+    connection = manager.all().get(device)
+    if connection is None:
+        connection = manager.get_or_create(device, _known_devices().get(device, 115200))
+    return connection
+
+
+@app.get("/api/ports")
+def api_list_ports(request: Request) -> list[dict]:
+    _check_api_token(_bearer(request))
+    result = []
+    for device, baudrate in _known_devices().items():
+        connection = manager.all().get(device)
+        result.append(
+            {
+                "device": device,
+                "name": _preset_name(device),
+                "baudrate": connection.baudrate if connection else baudrate,
+                "connected": bool(connection and connection.is_open),
+            }
+        )
+    return result
+
+
+@app.post("/api/send")
+async def api_send(request: Request) -> dict:
+    """Send ``{"device": ..., "command": ..., "raw": false}`` to a serial port."""
+    _check_api_token(_bearer(request))
+    body = await request.json()
+    device = body.get("device")
+    command = body.get("command")
+    if not isinstance(device, str) or not isinstance(command, str):
+        raise HTTPException(status_code=400, detail="'device' and 'command' are required")
+    if device not in _known_devices():
+        raise HTTPException(status_code=404, detail="Unknown device")
+    try:
+        _api_connection(device).send(command, raw=bool(body.get("raw", False)))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.websocket("/api/ws")
+async def api_ws(websocket: WebSocket, device: str, token: str | None = None) -> None:
+    """Stream RX/TX of ``device`` as JSON and accept input.
+
+    Server -> client: ``{"direction": "rx"|"tx", "text": "..."}``.
+    Client -> server: plain text or ``{"command": "...", "raw": false}``.
+    """
+    auth = websocket.headers.get("authorization", "")
+    supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else token
+    expected = os.environ.get("RPI_SEMIAUTOMATOR_API_TOKEN")
+    if expected and supplied != expected:
+        await websocket.close(code=1008)
+        return
+    if device not in _known_devices():
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    connection = _api_connection(device)
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def listener(direction: str, text: str) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, {"direction": direction, "text": text})
+
+    async def pump_out() -> None:
+        while True:
+            await websocket.send_json(await queue.get())
+
+    connection.subscribe(listener)
+    sender = asyncio.create_task(pump_out())
+    try:
+        while True:
+            message = await websocket.receive_text()
+            raw = False
+            command = message
+            try:
+                parsed = json.loads(message)
+                if isinstance(parsed, dict) and isinstance(parsed.get("command"), str):
+                    command = parsed["command"]
+                    raw = bool(parsed.get("raw", False))
+            except ValueError:
+                pass
+            try:
+                connection.send(command, raw=raw)
+            except Exception as exc:  # noqa: BLE001
+                await websocket.send_json({"error": str(exc)})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        sender.cancel()
+        connection.unsubscribe(listener)
+
+
 @app.on_shutdown
 def _cleanup() -> None:
     manager.disconnect_all()
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    ui.run(title="RPI-SemiAutomator", port=8080, host="0.0.0.0", reload=False)
+    ui.run(
+        title="RPI-SemiAutomator",
+        port=8080,
+        host="0.0.0.0",
+        reload=False,
+        storage_secret=os.environ.get("RPI_SEMIAUTOMATOR_STORAGE_SECRET", "rpi-semiautomator"),
+    )

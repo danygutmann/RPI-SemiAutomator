@@ -215,6 +215,32 @@ def remove_macro(label: str, device: str | None = None, path: Path | None = None
         _write_macros(macros, macros_path)
 
 
+def update_macro(
+    old_label: str,
+    old_device: str | None,
+    macro: Macro,
+    path: Path | None = None,
+) -> None:
+    """Replace an existing macro in place (keeping its position) with ``macro``."""
+    macros_path = path or _macros_path()
+    with _macros_lock:
+        existing = load_macros(macros_path)
+        old_key = (old_device, old_label)
+        new_key = _macro_key(macro)
+        result: dict[tuple[str | None, str], Macro] = {}
+        replaced = False
+        for item in existing:
+            key = _macro_key(item)
+            if key == old_key:
+                result[new_key] = macro
+                replaced = True
+            elif key != new_key:
+                result[key] = item
+        if not replaced:
+            result[new_key] = macro
+        _write_macros(result, macros_path)
+
+
 def backup_settings(
     favorites_path: Path | None = None, macros_path: Path | None = None
 ) -> bytes:

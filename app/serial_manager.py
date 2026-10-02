@@ -36,6 +36,26 @@ class SerialConnection:
     max_lines: int = 1000
     error: Optional[str] = None
     on_data: Optional[Callable[[str], None]] = field(default=None, repr=False)
+    _listeners: List[Callable[[str, str], None]] = field(default_factory=list, repr=False)
+
+    def subscribe(self, listener: Callable[[str, str], None]) -> None:
+        """Register ``listener(direction, text)``; direction is ``"rx"`` or ``"tx"``.
+
+        Listeners are called from the reader thread (rx) or the sending
+        thread (tx), so they must be thread-safe.
+        """
+        self._listeners.append(listener)
+
+    def unsubscribe(self, listener: Callable[[str, str], None]) -> None:
+        if listener in self._listeners:
+            self._listeners.remove(listener)
+
+    def _notify(self, direction: str, text: str) -> None:
+        for listener in list(self._listeners):
+            try:
+                listener(direction, text)
+            except Exception:  # noqa: BLE001 - a bad listener must not break I/O
+                pass
 
     @property
     def is_open(self) -> bool:
@@ -87,6 +107,7 @@ class SerialConnection:
         payload = command if raw else f"{command}\n"
         with self._lock:
             self._serial.write(payload.encode("utf-8", errors="replace"))
+        self._notify("tx", command)
 
     def _read_loop(self) -> None:
         buffer = ""
@@ -122,6 +143,7 @@ class SerialConnection:
             del self.lines[: len(self.lines) - self.max_lines]
         if self.on_data is not None:
             self.on_data(line)
+        self._notify("rx", line)
 
 
 class SerialManager:
