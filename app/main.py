@@ -182,22 +182,54 @@ def build_port_card(device: str, baudrate: int):
                 "outline dense"
             )
 
-        with ui.row().classes("w-full items-center shrink-0"):
-            command_input = ui.input(label="Befehl senden").classes("flex-grow")
+        key_map = {
+            "Enter": "\n",
+            "Tab": "\t",
+            "Backspace": "\x7f",
+            "Escape": "\x1b",
+            "ArrowUp": "\x1b[A",
+            "ArrowDown": "\x1b[B",
+            "ArrowRight": "\x1b[C",
+            "ArrowLeft": "\x1b[D",
+            "Delete": "\x1b[3~",
+            "Home": "\x1b[H",
+            "End": "\x1b[F",
+        }
 
-            def send_command() -> None:
-                text = command_input.value
-                if not text:
-                    return
-                try:
-                    connection.send(text)
-                    log.push(f"TX → {text}")
-                    command_input.value = ""
-                except Exception as exc:  # noqa: BLE001
-                    ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
+        def on_key(e) -> None:
+            args = e.args or {}
+            key = args.get("key", "")
+            if args.get("ctrlKey") and len(key) == 1 and key.isalpha():
+                payload = chr(ord(key.lower()) - 96)
+            elif key in key_map:
+                payload = key_map[key]
+            elif len(key) == 1 and not args.get("ctrlKey") and not args.get("metaKey"):
+                payload = key
+            else:
+                return
+            try:
+                connection.send(payload, raw=True)
+            except Exception as exc:  # noqa: BLE001
+                ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
 
-            command_input.on("keydown.enter", lambda: send_command())
-            ui.button("Senden", on_click=send_command, icon="send")
+        log.props("tabindex=0")
+        log.on(
+            "keydown",
+            on_key,
+            args=["key", "ctrlKey", "metaKey"],
+            js_handler="""(e) => {
+                const k = e.key;
+                if (e.metaKey || (e.ctrlKey && k.length !== 1)) return;
+                if (k.length === 1 || ['Enter','Tab','Backspace','Escape','ArrowUp',
+                    'ArrowDown','ArrowLeft','ArrowRight','Delete','Home','End'].includes(k)) {
+                    e.preventDefault();
+                    emit({key: k, ctrlKey: e.ctrlKey, metaKey: e.metaKey});
+                }
+            }""",
+        )
+        ui.label("Zum Tippen in die Konsole klicken – Eingaben werden direkt gesendet.").classes(
+            "text-xs text-grey shrink-0"
+        )
 
         def refresh() -> None:
             if connection.error:
@@ -208,7 +240,7 @@ def build_port_card(device: str, baudrate: int):
                 status_badge.props(f"color={'green' if connection.is_open else 'red'}")
             new_lines = connection.lines[last_rendered_count["n"] :]
             for line in new_lines:
-                log.push(f"RX ← {line}")
+                log.push(line)
             last_rendered_count["n"] = len(connection.lines)
 
     return ui.timer(0.5, refresh)
@@ -849,5 +881,6 @@ if __name__ in {"__main__", "__mp_main__"}:
         port=8080,
         host="0.0.0.0",
         reload=False,
+        fastapi_docs=True,
         storage_secret=os.environ.get("RPI_SEMIAUTOMATOR_STORAGE_SECRET", "rpi-semiautomator"),
     )
