@@ -241,6 +241,21 @@ def update_macro(
         _write_macros(result, macros_path)
 
 
+def set_device_macros(
+    device: str, macros: List[Macro], path: Path | None = None
+) -> None:
+    """Replace all macros scoped to ``device`` with ``macros`` (global ones are kept)."""
+    macros_path = path or _macros_path()
+    with _macros_lock:
+        result = {
+            _macro_key(item): item for item in load_macros(macros_path) if item.device != device
+        }
+        for macro in macros:
+            macro.device = device
+            result[_macro_key(macro)] = macro
+        _write_macros(result, macros_path)
+
+
 def backup_settings(
     favorites_path: Path | None = None, macros_path: Path | None = None
 ) -> bytes:

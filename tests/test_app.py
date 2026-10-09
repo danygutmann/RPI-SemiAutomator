@@ -218,3 +218,69 @@ def test_serial_connection_connect_invalid_device_raises():
         conn.connect()
     assert conn.error is not None
     assert not conn.is_open
+
+
+@pytest.fixture
+def api_client(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from nicegui import app as nicegui_app
+
+    monkeypatch.setenv("RPI_SEMIAUTOMATOR_FAVORITES", str(tmp_path / "favorites.yaml"))
+    monkeypatch.setenv("RPI_SEMIAUTOMATOR_MACROS", str(tmp_path / "macros.yaml"))
+    import config as config_module
+
+    config_module.save_favorite(
+        config_module.PortPreset(name="Plant1", device="/dev/ttyTEST0", baudrate=9600)
+    )
+    import main as main_module
+
+    main_module.favorites[:] = config_module.load_favorites()
+    main_module.user_macros[:] = []
+    return TestClient(nicegui_app)
+
+
+def test_api_interfaces_use_alias(api_client):
+    data = api_client.get("/api/interfaces").json()
+    assert data == [
+        {"alias": "Plant1", "device": "/dev/ttyTEST0", "baudrate": 9600, "connected": False}
+    ]
+    assert api_client.get("/api/interfaces/Unknown/macros").status_code == 404
+
+
+def test_api_macros_read_edit_delete(api_client):
+    url = "/api/interfaces/Plant1/macros"
+    assert api_client.get(url).json() == []
+    resp = api_client.put(f"{url}/Group/Ping", json={"command": "ping"})
+    assert resp.status_code == 200
+    assert api_client.get(url).json() == [
+        {"label": "Group/Ping", "command": "ping", "raw": False, "scope": "interface"}
+    ]
+    resp = api_client.put(url, json=[{"label": "A", "command": "a"}, {"label": "B", "command": "b", "raw": True}])
+    assert [m["label"] for m in resp.json()] == ["A", "B"]
+    assert api_client.put(url, json=[{"label": "A"}]).status_code == 400
+    assert api_client.delete(f"{url}/A").status_code == 200
+    assert api_client.delete(f"{url}/A").status_code == 404
+    assert [m["label"] for m in api_client.get(url).json()] == ["B"]
+
+
+def test_api_backup_and_token(api_client, monkeypatch):
+    resp = api_client.get("/api/backup")
+    assert resp.status_code == 200
+    data = yaml.safe_load(resp.content)
+    assert data["favorites"][0]["name"] == "Plant1"
+    monkeypatch.setenv("RPI_SEMIAUTOMATOR_API_TOKEN", "secret")
+    assert api_client.get("/api/backup").status_code == 401
+    assert api_client.get("/api/backup", headers={"Authorization": "Bearer " + "secret"}).status_code == 200
+
+
+def test_build_macro_tree_groups_by_slash():
+    import main as main_module
+    from config import Macro
+
+    nodes, leaves = main_module.build_macro_tree(
+        [Macro("A/B/C", "c"), Macro("A/D", "d"), Macro("Top", "t")]
+    )
+    assert [n["label"] for n in nodes] == ["A", "Top"]
+    assert [n["label"] for n in nodes[0]["children"]] == ["B", "D"]
+    assert nodes[0]["children"][0]["children"][0]["label"] == "C"
+    assert leaves[nodes[1]["id"]].command == "t"
