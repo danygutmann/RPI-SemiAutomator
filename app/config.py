@@ -40,6 +40,7 @@ class Macro:
     command: str
     raw: bool = False
     device: Optional[str] = None
+    category: Optional[str] = None
 
 
 @dataclass
@@ -88,6 +89,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             command=entry["command"],
             raw=bool(entry.get("raw", False)),
             device=entry.get("device"),
+            category=entry.get("category"),
         )
         for entry in raw.get("macros", []) or []
     ]
@@ -167,6 +169,7 @@ def load_macros(path: Path | None = None) -> List[Macro]:
             command=entry["command"],
             raw=bool(entry.get("raw", False)),
             device=entry.get("device"),
+            category=entry.get("category"),
         )
         for entry in raw.get("macros", []) or []
     ]
@@ -187,6 +190,7 @@ def _write_macros(macros: dict[tuple[str | None, str], Macro], macros_path: Path
                         "command": macro.command,
                         "raw": macro.raw,
                         "device": macro.device,
+                        **({"category": macro.category} if macro.category else {}),
                     }
                     for macro in macros.values()
                 ]
@@ -262,6 +266,7 @@ def backup_settings(
                 "command": macro.command,
                 "raw": macro.raw,
                 "device": macro.device,
+                **({"category": macro.category} if macro.category else {}),
             }
             for macro in macros
         ],

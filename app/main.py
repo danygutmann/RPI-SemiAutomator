@@ -77,6 +77,22 @@ def _preset_name(device: str) -> str:
     return device
 
 
+def _device_aliases() -> dict[str, str]:
+    """Return configured aliases by device, with saved favorites taking priority."""
+    aliases = {preset.device: preset.name for preset in config.ports}
+    aliases.update({favorite.device: favorite.name for favorite in favorites})
+    return {device: alias for device, alias in aliases.items() if alias and alias != device}
+
+
+def _api_device_for_alias(alias: str) -> str:
+    matches = [device for device, name in _device_aliases().items() if name == alias]
+    if not matches:
+        raise HTTPException(status_code=404, detail="Unknown alias")
+    if len(matches) > 1:
+        raise HTTPException(status_code=409, detail="Alias is not unique")
+    return matches[0]
+
+
 def _device_options() -> Dict[str, str]:
     return {
         device: f"{_preset_name(device)} ({device})"
@@ -95,9 +111,11 @@ def _macros_for(device: str) -> list[Macro]:
     return [macro for macro in user_macros if macro.device is None or macro.device == device]
 
 
-def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite_saved=None):
+def build_port_card(device: str, baudrate: int):
     """Build the console card for one device. Does not open the connection."""
     connection: SerialConnection = manager.get_or_create(device, baudrate)
+    if not connection.is_open:
+        connection.baudrate = baudrate
 
     with ui.column().classes("w-full h-full gap-2"):
         with ui.row().classes("items-center w-full justify-between shrink-0"):
@@ -114,12 +132,7 @@ def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite
             )
 
         with ui.row().classes("items-center w-full shrink-0"):
-            baud_input = ui.number(
-                label="Baudrate", value=connection.baudrate, min=110, max=4000000
-            ).classes("w-32")
-
             def do_connect() -> None:
-                connection.baudrate = int(baud_input.value or connection.baudrate)
                 try:
                     connection.connect()
                     ui.notify(f"{device} verbunden", type="positive")
@@ -134,41 +147,6 @@ def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite
             ui.button("Trennen", on_click=do_disconnect, icon="power_off").props(
                 "outline"
             )
-
-            with ui.dialog() as favorite_dialog, ui.card():
-                ui.label("Favorit speichern").classes("text-lg font-bold")
-                favorite_name_input = ui.input(label="Name").classes("w-64")
-                with ui.row().classes("justify-end w-full gap-2"):
-                    ui.button("Abbrechen", on_click=favorite_dialog.close).props("flat")
-                    confirm_favorite_button = ui.button("Speichern", icon="star")
-
-            def open_favorite_dialog() -> None:
-                favorite_name_input.value = _preset_name(device)
-                favorite_dialog.open()
-
-            def confirm_favorite() -> None:
-                try:
-                    name = (favorite_name_input.value or device).strip() or device
-                    favorite = PortPreset(
-                        name=name,
-                        device=device,
-                        baudrate=int(baud_input.value or connection.baudrate),
-                    )
-                    save_favorite(favorite)
-                    favorites.clear()
-                    favorites.extend(load_favorites())
-                    favorite_dialog.close()
-                    ui.notify(f"'{name}' als Favorit gespeichert", type="positive")
-                    if on_favorite_saved is not None:
-                        on_favorite_saved()
-                except Exception as exc:  # noqa: BLE001
-                    ui.notify(f"Favorit konnte nicht gespeichert werden: {exc}", type="negative")
-
-            confirm_favorite_button.on_click(confirm_favorite)
-
-            ui.button(
-                "Als Favorit speichern", on_click=open_favorite_dialog, icon="star"
-            ).props("outline")
 
         log = ui.log(max_lines=500).classes("w-full flex-grow").style(
             "resize: vertical; overflow: auto; min-height: 150px;"
@@ -221,72 +199,6 @@ def build_port_card(device: str, baudrate: int, on_macro_saved=None, on_favorite
             command_input.on("keydown.enter", lambda: send_command())
             ui.button("Senden", on_click=send_command, icon="send")
 
-        with ui.dialog() as macro_dialog, ui.card():
-            ui.label("Makro hinzufügen").classes("text-lg font-bold")
-            macro_name_input = ui.input(label="Name").classes("w-64")
-            macro_command_input = ui.input(label="Kommando").classes("w-64")
-            macro_device_only = ui.checkbox(f"Nur für {device}", value=False)
-            with ui.row().classes("justify-end w-full gap-2"):
-                ui.button("Abbrechen", on_click=macro_dialog.close).props("flat")
-                confirm_macro_button = ui.button("Speichern", icon="add")
-
-        def render_macros() -> None:
-            macros_row.clear()
-            macros = _macros_for(device)
-            with macros_row:
-                for macro in macros:
-                    def make_handler(m: Macro):
-                        def handler() -> None:
-                            try:
-                                connection.send(m.command, raw=m.raw)
-                                log.push(f"TX → {m.command}")
-                                ui.notify(f"Makro '{m.label}' gesendet")
-                            except Exception as exc:  # noqa: BLE001
-                                ui.notify(
-                                    f"Makro fehlgeschlagen: {exc}", type="negative"
-                                )
-
-                        return handler
-
-                    ui.button(macro.label, on_click=make_handler(macro)).props(
-                        "outline"
-                    )
-                ui.button(icon="add", on_click=macro_dialog.open).props(
-                    "outline dense round"
-                ).tooltip("Makro hinzufügen")
-
-        def confirm_macro() -> None:
-            try:
-                name = (macro_name_input.value or "").strip()
-                command = (macro_command_input.value or "").strip()
-                if not name or not command:
-                    ui.notify("Name und Kommando sind erforderlich", type="warning")
-                    return
-                macro = Macro(
-                    label=name,
-                    command=command,
-                    device=device if macro_device_only.value else None,
-                )
-                save_macro(macro)
-                user_macros.clear()
-                user_macros.extend(load_macros())
-                macro_name_input.value = ""
-                macro_command_input.value = ""
-                macro_device_only.value = False
-                macro_dialog.close()
-                render_macros()
-                if on_macro_saved is not None:
-                    on_macro_saved()
-                ui.notify(f"Makro '{name}' gespeichert", type="positive")
-            except Exception as exc:  # noqa: BLE001
-                ui.notify(f"Makro konnte nicht gespeichert werden: {exc}", type="negative")
-
-        confirm_macro_button.on_click(confirm_macro)
-
-        ui.label("Makros").classes("text-sm text-grey-6 shrink-0")
-        macros_row = ui.row().classes("w-full flex-wrap shrink-0")
-        render_macros()
-
         def refresh() -> None:
             if connection.error:
                 status_badge.set_text("Fehler")
@@ -327,30 +239,137 @@ def index() -> None:
                 "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
             ).props("flat color=white")
 
-    with ui.left_drawer(value=True, bordered=True) as drawer:
-        ui.label("Favoriten").classes("text-sm font-semibold text-grey-6")
-        favorites_container = ui.column().classes("w-full gap-1")
+    with ui.left_drawer(value=False, bordered=True) as drawer:
+        ui.label("Makros").classes("text-lg font-semibold")
+        ui.label("Rechtsklick auf einen Ordner oder ein Makro, um Makros hinzuzufügen.").classes(
+            "text-xs text-grey-6"
+        )
+        macros_container = ui.column().classes("w-full gap-1")
+        with ui.dialog() as macro_dialog, ui.card():
+            ui.label("Makro hinzufügen").classes("text-lg font-bold")
+            macro_name_input = ui.input(label="Name").classes("w-64")
+            macro_command_input = ui.input(label="Kommando").classes("w-64")
+            macro_category_input = ui.input(label="Ordner (mit / verschachteln)").classes("w-64")
+            macro_device_only = ui.checkbox(
+                "Nur für die aktive Schnittstelle", value=False
+            )
+            with ui.row().classes("justify-end w-full gap-2"):
+                ui.button("Abbrechen", on_click=macro_dialog.close).props("flat")
+                confirm_macro_button = ui.button("Speichern", icon="add")
 
-        def render_favorites() -> None:
-            favorites_container.clear()
-            if not favorites:
-                with favorites_container:
-                    ui.label(
-                        "Keine Favoriten. Unter Einstellungen hinzufügen."
-                    ).classes("text-xs text-grey-6")
+        def open_macro_dialog(category: str = "") -> None:
+            macro_category_input.value = category
+            macro_dialog.open()
+
+        def confirm_macro() -> None:
+            name = (macro_name_input.value or "").strip()
+            command = (macro_command_input.value or "").strip()
+            if not name or not command:
+                ui.notify("Name und Kommando sind erforderlich", type="warning")
                 return
-            with favorites_container:
-                for favorite in list(favorites):
-                    is_active = favorite.device == page_state["active_device"]
-                    ui.button(
-                        f"★ {favorite.name} ({favorite.device})",
-                        on_click=lambda d=favorite.device: select_device(d),
-                    ).props(
-                        f"{'unelevated' if is_active else 'flat'} align=left no-caps"
-                    ).classes("w-full")
+            if macro_device_only.value and page_state["active_device"] is None:
+                ui.notify("Keine aktive Schnittstelle ausgewählt", type="warning")
+                return
+            category = "/".join(
+                part.strip()
+                for part in (macro_category_input.value or "").split("/")
+                if part.strip()
+            )
+            try:
+                save_macro(
+                    Macro(
+                        label=name,
+                        command=command,
+                        device=(
+                            page_state["active_device"]
+                            if macro_device_only.value
+                            else None
+                        ),
+                        category=category or None,
+                    )
+                )
+                user_macros.clear()
+                user_macros.extend(load_macros())
+                macro_dialog.close()
+                macro_name_input.value = ""
+                macro_command_input.value = ""
+                macro_device_only.value = False
+                render_macro_tree()
+                ui.notify(f"Makro '{name}' gespeichert", type="positive")
+            except Exception as exc:  # noqa: BLE001
+                ui.notify(f"Makro konnte nicht gespeichert werden: {exc}", type="negative")
+
+        confirm_macro_button.on_click(confirm_macro)
+
+        def render_macro_tree() -> None:
+            macros_container.clear()
+            device = page_state["active_device"]
+            macros = _macros_for(device) if device else [
+                macro for macro in user_macros if macro.device is None
+            ]
+            root = {"groups": {}, "macros": []}
+            for macro in macros:
+                node = root
+                for part in (macro.category or "").split("/"):
+                    part = part.strip()
+                    if part:
+                        node = node["groups"].setdefault(
+                            part, {"groups": {}, "macros": []}
+                        )
+                node["macros"].append(macro)
+
+            def draw_group(node: dict, category: str = "") -> None:
+                for group, child in node["groups"].items():
+                    group_path = f"{category}/{group}".strip("/")
+                    with ui.expansion(group, icon="folder").classes("w-full"):
+                        with ui.column().classes("w-full gap-1 pl-2"):
+                            draw_group(child, group_path)
+                        with ui.context_menu():
+                            ui.menu_item(
+                                "Makro hinzufügen",
+                                on_click=lambda path=group_path: open_macro_dialog(path),
+                            )
+                for macro in node["macros"]:
+                    def make_sender(item: Macro):
+                        def send() -> None:
+                            selected = page_state["active_device"]
+                            if selected is None:
+                                ui.notify("Keine aktive Schnittstelle ausgewählt", type="warning")
+                                return
+                            connection = manager.get_or_create(
+                                selected, _known_devices().get(selected, 115200)
+                            )
+                            try:
+                                connection.send(item.command, raw=item.raw)
+                                ui.notify(f"Makro '{item.label}' gesendet")
+                            except Exception as exc:  # noqa: BLE001
+                                ui.notify(f"Makro fehlgeschlagen: {exc}", type="negative")
+
+                        return send
+
+                    with ui.button(
+                        macro.label, on_click=make_sender(macro)
+                    ).props("flat align=left no-caps").classes("w-full") as macro_button:
+                        with ui.context_menu():
+                            ui.menu_item(
+                                "Makro hinzufügen",
+                                on_click=lambda path=category: open_macro_dialog(path),
+                            )
+
+            with macros_container:
+                if not macros:
+                    ui.label("Keine Makros. Rechtsklick zum Hinzufügen.").classes(
+                        "text-sm text-grey-6"
+                    )
+                else:
+                    draw_group(root)
+                with ui.context_menu():
+                    ui.menu_item(
+                        "Makro hinzufügen", on_click=lambda: open_macro_dialog("")
+                    )
 
     with ui.column().classes("w-full h-full gap-2 p-2"):
-        tabs_row = ui.row().classes("w-full shrink-0")
+        tabs_row = ui.row().classes("w-full shrink-0 justify-center")
         panel_container = ui.column().classes("w-full flex-grow overflow-hidden")
 
         def select_device(device: str) -> None:
@@ -361,20 +380,11 @@ def index() -> None:
                 page_state["active_timer"].cancel()
                 page_state["active_timer"] = None
             panel_container.clear()
-            render_favorites()
+            render_macro_tree()
             with panel_container:
                 with ui.column().classes("w-full h-full"):
                     baudrate = _known_devices().get(device, 115200)
-
-                    def on_macro_saved() -> None:
-                        render_terminals(_favorite_devices(), page_state["active_device"])
-
-                    def on_favorite_saved() -> None:
-                        render_terminals(_favorite_devices(), page_state["active_device"])
-
-                    page_state["active_timer"] = build_port_card(
-                        device, baudrate, on_macro_saved, on_favorite_saved
-                    )
+                    page_state["active_timer"] = build_port_card(device, baudrate)
 
         def render_terminals(devices: list[str], active_device: str | None = None) -> None:
             if page_state["active_timer"] is not None:
@@ -388,8 +398,6 @@ def index() -> None:
             if active_device not in devices:
                 active_device = devices[0] if devices else None
 
-            render_favorites()
-
             with tabs_row:
                 if not devices:
                     ui.label(
@@ -397,7 +405,7 @@ def index() -> None:
                     )
                     page_state["active_device"] = None
                     return
-                with ui.tabs().classes("w-full") as tabs:
+                with ui.tabs().classes("w-full").props("align=center") as tabs:
                     for device in devices:
                         ui.tab(device, label=f"★ {_preset_name(device)} ({device})")
                 tabs.value = active_device
@@ -565,6 +573,10 @@ def settings_page() -> None:
                                     command_input = ui.input(
                                         label="Kommando", value=m.command
                                     ).classes("w-64")
+                                    category_input = ui.input(
+                                        label="Ordner (mit / verschachteln)",
+                                        value=m.category or "",
+                                    ).classes("w-64")
                                     device_select = ui.select(
                                         options={"": "Alle Schnittstellen", **_device_options()},
                                         label="Schnittstelle",
@@ -588,6 +600,12 @@ def settings_page() -> None:
                                                 command=command,
                                                 raw=m.raw,
                                                 device=device_select.value or None,
+                                                category="/".join(
+                                                    part.strip()
+                                                    for part in (category_input.value or "").split("/")
+                                                    if part.strip()
+                                                )
+                                                or None,
                                             ),
                                         )
                                         user_macros.clear()
@@ -680,17 +698,49 @@ def _api_connection(device: str) -> SerialConnection:
 def api_list_ports(request: Request) -> list[dict]:
     _check_api_token(_bearer(request))
     result = []
+    aliases = _device_aliases()
     for device, baudrate in _known_devices().items():
         connection = manager.all().get(device)
         result.append(
             {
                 "device": device,
                 "name": _preset_name(device),
+                "alias": aliases.get(device),
                 "baudrate": connection.baudrate if connection else baudrate,
                 "connected": bool(connection and connection.is_open),
             }
         )
     return result
+
+
+@app.get("/api/aliases")
+def api_list_aliases(request: Request) -> list[dict]:
+    """List interfaces addressable by their configured alias."""
+    _check_api_token(_bearer(request))
+    result = []
+    devices = _known_devices()
+    for device, alias in _device_aliases().items():
+        connection = manager.all().get(device)
+        result.append(
+            {
+                "alias": alias,
+                "device": device,
+                "baudrate": connection.baudrate if connection else devices.get(device, 115200),
+                "connected": bool(connection and connection.is_open),
+            }
+        )
+    return result
+
+
+def _api_send_to_device(device: str, body: dict) -> dict:
+    command = body.get("command")
+    if not isinstance(command, str):
+        raise HTTPException(status_code=400, detail="'command' is required")
+    try:
+        _api_connection(device).send(command, raw=bool(body.get("raw", False)))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @app.post("/api/send")
@@ -704,15 +754,21 @@ async def api_send(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="'device' and 'command' are required")
     if device not in _known_devices():
         raise HTTPException(status_code=404, detail="Unknown device")
-    try:
-        _api_connection(device).send(command, raw=bool(body.get("raw", False)))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"ok": True}
+    return _api_send_to_device(device, body)
 
 
-@app.websocket("/api/ws")
-async def api_ws(websocket: WebSocket, device: str, token: str | None = None) -> None:
+@app.post("/api/aliases/{alias}/send")
+async def api_send_to_alias(alias: str, request: Request) -> dict:
+    """Send a command using a configured interface alias."""
+    _check_api_token(_bearer(request))
+    device = _api_device_for_alias(alias)
+    body = await request.json()
+    return _api_send_to_device(device, body)
+
+
+async def _api_ws_for_device(
+    websocket: WebSocket, device: str, token: str | None = None
+) -> None:
     """Stream RX/TX of ``device`` as JSON and accept input.
 
     Server -> client: ``{"direction": "rx"|"tx", "text": "..."}``.
@@ -763,6 +819,23 @@ async def api_ws(websocket: WebSocket, device: str, token: str | None = None) ->
     finally:
         sender.cancel()
         connection.unsubscribe(listener)
+
+
+@app.websocket("/api/ws")
+async def api_ws(websocket: WebSocket, device: str, token: str | None = None) -> None:
+    await _api_ws_for_device(websocket, device, token)
+
+
+@app.websocket("/api/aliases/{alias}/ws")
+async def api_ws_alias(
+    websocket: WebSocket, alias: str, token: str | None = None
+) -> None:
+    try:
+        device = _api_device_for_alias(alias)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    await _api_ws_for_device(websocket, device, token)
 
 
 @app.on_shutdown
