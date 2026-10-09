@@ -12,7 +12,7 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
   nur Schnittstellen angezeigt, die zuvor als **Favorit** gespeichert wurden
 - Verbinden/Trennen einzelner Ports; Baudraten werden in den Einstellungen
   pro Favorit konfiguriert
-- Live-Log der gesendeten (`TX`) und empfangenen (`RX`) Daten je Port, mit Button zum Leeren der Anzeige; das Terminal-Fenster ist in der Höhe per Ziehen am unteren Rand verstellbar
+- Live-Konsole je Port: In die Konsole klicken und direkt tippen (Enter, Tab, Pfeiltasten, Strg+Taste werden direkt gesendet; leeres Enter möglich), mit Button zum Leeren der Anzeige; das Terminal-Fenster ist in der Höhe per Ziehen am unteren Rand verstellbar
 - Download des aktuellen Logs als lokale Textdatei
 - Freitext-Eingabe zum Senden beliebiger Befehle
 - Individuelle Makros (global oder je Schnittstelle) im Burger-Menü; Ordner
@@ -112,6 +112,7 @@ pytest
 
 Optional absicherbar mit `RPI_SEMIAUTOMATOR_API_TOKEN` (Bearer-Token im `Authorization`-Header oder `?token=`).
 
+- Swagger/OpenAPI-Doku: `/docs` (Schema unter `/openapi.json`)
 - `GET /api/ports` – Schnittstellen und Status
 - `POST /api/send` – `{"device": "/dev/ttyUSB0", "command": "...", "raw": false}`
 - `WS /api/ws?device=/dev/ttyUSB0` – streamt `{"direction": "rx"|"tx", "text": "..."}`; Text oder `{"command": "..."}` senden
