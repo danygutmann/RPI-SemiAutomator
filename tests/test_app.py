@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP_DIR))
@@ -50,6 +51,7 @@ macros:
     command: "ping"
     raw: true
     device: "/dev/ttyTEST0"
+    category: "System/Status"
 """
     )
     config = load_config(custom)
@@ -59,6 +61,7 @@ macros:
     assert config.macros[0].label == "Ping"
     assert config.macros[0].raw is True
     assert config.macros[0].device == "/dev/ttyTEST0"
+    assert config.macros[0].category == "System/Status"
 
 
 def test_save_favorite_adds_and_updates_port(tmp_path):
@@ -119,6 +122,28 @@ def test_save_macro_adds_and_updates_macro(tmp_path):
     save_macro(macro(label="Ping", command="ping -c1"), macros_path)
 
     assert load_macros(macros_path) == [macro(label="Ping", command="ping -c1")]
+
+
+def test_macro_category_is_persisted_and_included_in_backup(tmp_path):
+    macros_path = tmp_path / "macros.yaml"
+    macro = __import__("config").Macro(
+        label="Boot", command="boot", category="System/Startup"
+    )
+
+    save_macro(macro, macros_path)
+
+    assert load_macros(macros_path) == [macro]
+    assert yaml.safe_load(backup_settings(tmp_path / "favorites.yaml", macros_path))[
+        "macros"
+    ] == [
+        {
+            "label": "Boot",
+            "command": "boot",
+            "raw": False,
+            "device": None,
+            "category": "System/Startup",
+        }
+    ]
 
 
 def test_save_macro_device_scoped_is_independent_of_global(tmp_path):
@@ -218,3 +243,138 @@ def test_serial_connection_connect_invalid_device_raises():
         conn.connect()
     assert conn.error is not None
     assert not conn.is_open
+
+
+def test_alias_api_lists_and_sends_to_configured_interface(monkeypatch):
+    import main as main_module
+
+    port = __import__("config").PortPreset(
+        name="Bench", device="/dev/ttyTEST0", baudrate=9600
+    )
+    sent = []
+
+    class Connection:
+        baudrate = 9600
+        is_open = True
+
+        def send(self, command, raw=False):
+            sent.append((command, raw))
+
+        def subscribe(self, listener):
+            self.listener = listener
+
+        def unsubscribe(self, listener):
+            pass
+
+    connection = Connection()
+
+    class Manager:
+        def all(self):
+            return {port.device: connection}
+
+        def list_available_devices(self):
+            return []
+
+        def get_or_create(self, device, baudrate=115200):
+            assert device == port.device
+            return connection
+
+    monkeypatch.setattr(
+        main_module, "config", __import__("config").AppConfig(ports=[port])
+    )
+    monkeypatch.setattr(main_module, "favorites", [])
+    monkeypatch.setattr(main_module, "manager", Manager())
+
+    client = TestClient(main_module.app)
+    assert client.get("/api/aliases").json() == [
+        {
+            "alias": "Bench",
+            "device": "/dev/ttyTEST0",
+            "baudrate": 9600,
+            "connected": True,
+        }
+    ]
+    response = client.post(
+        "/api/aliases/Bench/send", json={"command": "status", "raw": True}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert sent == [("status", True)]
+
+
+def test_alias_api_rejects_ambiguous_alias(monkeypatch):
+    import main as main_module
+
+    ports = [
+        __import__("config").PortPreset(name="Bench", device="/dev/ttyTEST0"),
+        __import__("config").PortPreset(name="Bench", device="/dev/ttyTEST1"),
+    ]
+
+    class Manager:
+        def all(self):
+            return {}
+
+        def list_available_devices(self):
+            return []
+
+    monkeypatch.setattr(
+        main_module, "config", __import__("config").AppConfig(ports=ports)
+    )
+    monkeypatch.setattr(main_module, "favorites", [])
+    monkeypatch.setattr(main_module, "manager", Manager())
+
+    response = TestClient(main_module.app).post(
+        "/api/aliases/Bench/send", json={"command": "status"}
+    )
+
+    assert response.status_code == 409
+
+
+def test_alias_websocket_sends_commands_to_configured_interface(monkeypatch):
+    import main as main_module
+
+    port = __import__("config").PortPreset(
+        name="Bench", device="/dev/ttyTEST0"
+    )
+    listeners = []
+    sent = []
+
+    class Connection:
+        baudrate = 115200
+        is_open = True
+
+        def subscribe(self, listener):
+            listeners.append(listener)
+
+        def unsubscribe(self, listener):
+            listeners.remove(listener)
+
+        def send(self, command, raw=False):
+            sent.append(command)
+            for listener in listeners:
+                listener("tx", command)
+
+    connection = Connection()
+
+    class Manager:
+        def all(self):
+            return {port.device: connection}
+
+        def list_available_devices(self):
+            return []
+
+        def get_or_create(self, device, baudrate=115200):
+            return connection
+
+    monkeypatch.setattr(
+        main_module, "config", __import__("config").AppConfig(ports=[port])
+    )
+    monkeypatch.setattr(main_module, "favorites", [])
+    monkeypatch.setattr(main_module, "manager", Manager())
+
+    client = TestClient(main_module.app)
+    with client.websocket_connect("/api/aliases/Bench/ws") as websocket:
+        websocket.send_text("ping")
+        assert websocket.receive_json() == {"direction": "tx", "text": "ping"}
+    assert sent == ["ping"]
