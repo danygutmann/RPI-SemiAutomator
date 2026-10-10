@@ -122,6 +122,23 @@ Optional absicherbar mit `RPI_SEMIAUTOMATOR_API_TOKEN` (Bearer-Token im `Authori
   `{"command": "...", "raw": false}`
 - `WS /api/aliases/{alias}/ws` – WebSocket wie `/api/ws`, adressiert über den
   Alias statt den Gerätepfad
+- `GET /api/macros` – alle Makros; mit `?device=/dev/ttyUSB0` werden globale
+  Makros und Makros für diese Schnittstelle zurückgegeben
+- `GET /api/aliases/{alias}/macros` – globale und schnittstellenspezifische
+  Makros für den angegebenen Alias
+- `POST /api/macros` – Makro anlegen, zum Beispiel:
+  `{"label":"Status","command":"status","raw":false,"device":"/dev/ttyUSB0","category":"System"}`
+  (`device` und `category` dürfen `null` sein oder fehlen; bei gleichem Namen
+  und Geltungsbereich wird HTTP 409 zurückgegeben)
+- `PUT /api/macros` – Makro anhand seiner bisherigen Angaben bearbeiten. Der
+  Body enthält dieselben Felder wie beim Anlegen sowie `old_label` und
+  `old_device` (bisheriger Name und bisherige Schnittstelle; für globale
+  Makros `null`). Ein nicht gefundenes Makro ergibt HTTP 404.
+- `DELETE /api/macros/{label}?device=/dev/ttyUSB0` – Makro löschen; für ein
+  globales Makro den Parameter `device` weglassen. Ein nicht gefundenes Makro
+  ergibt HTTP 404.
+- `GET /api/backup` – lädt ein YAML-Backup mit Favoriten und Makros als
+  `rpi-semiautomator-backup.yaml` herunter.
 
 Der Alias ist der **Name** des Ports aus `config/config.yaml` oder der Name
 eines unter Einstellungen gespeicherten Favoriten. Favoriten-Namen haben
@@ -130,3 +147,13 @@ benannten Schnittstellen `null`). Jeder Alias muss eindeutig sein; ein
 mehrdeutiger Alias wird beim Senden mit HTTP 409 abgewiesen. Für Aliase mit
 Leerzeichen müssen diese im URL-Pfad URL-kodiert werden. Die bestehenden
 gerätepfadbasierten Endpunkte bleiben weiterhin verfügbar.
+
+Alle HTTP-Endpunkte können optional mit `RPI_SEMIAUTOMATOR_API_TOKEN`
+abgesichert werden. Bei gesetztem Token muss es im Authorization-Header als
+Bearer-Token mitgesendet werden; alternativ ist der Query-Parameter `token`
+möglich. Bei geschützten WebSockets gelten dieselben Optionen (Token im
+Query-Parameter oder Bearer-Header). Die Makro-API liest und bearbeitet die
+individuellen Makros aus `data/macros.yaml` (bzw.
+`RPI_SEMIAUTOMATOR_MACROS`); Port-Voreinstellungen aus `config/config.yaml`
+werden dadurch nicht verändert. Das Backup enthält gespeicherte Favoriten und
+individuelle Makros.

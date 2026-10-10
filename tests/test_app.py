@@ -331,6 +331,112 @@ def test_alias_api_rejects_ambiguous_alias(monkeypatch):
     assert response.status_code == 409
 
 
+def test_macro_api_crud_and_backup(monkeypatch, tmp_path):
+    import main as main_module
+
+    port = __import__("config").PortPreset(
+        name="Bench", device="/dev/ttyTEST0", baudrate=9600
+    )
+
+    class Manager:
+        def all(self):
+            return {}
+
+        def list_available_devices(self):
+            return []
+
+    monkeypatch.setattr(
+        main_module, "config", __import__("config").AppConfig(ports=[port])
+    )
+    monkeypatch.setattr(main_module, "favorites", [])
+    monkeypatch.setattr(main_module, "user_macros", [])
+    monkeypatch.setattr(main_module, "manager", Manager())
+    monkeypatch.setenv("RPI_SEMIAUTOMATOR_MACROS", str(tmp_path / "macros.yaml"))
+    monkeypatch.setenv("RPI_SEMIAUTOMATOR_FAVORITES", str(tmp_path / "favorites.yaml"))
+    client = TestClient(main_module.app)
+
+    assert client.get("/api/macros").json() == []
+    created = client.post(
+        "/api/macros",
+        json={
+            "label": "Status",
+            "command": "status",
+            "raw": True,
+            "device": port.device,
+            "category": " System / Info ",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json() == {
+        "label": "Status",
+        "command": "status",
+        "raw": True,
+        "device": port.device,
+        "category": "System/Info",
+    }
+    assert main_module.user_macros == [__import__("config").Macro(**created.json())]
+    assert client.get("/api/macros", params={"device": port.device}).json() == [
+        created.json()
+    ]
+    assert client.get("/api/aliases/Bench/macros").json() == [created.json()]
+    assert client.post("/api/macros", json=created.json()).status_code == 409
+
+    updated = client.put(
+        "/api/macros",
+        json={
+            "old_label": "Status",
+            "old_device": port.device,
+            "label": "Version",
+            "command": "version",
+            "device": port.device,
+            "category": "System",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["label"] == "Version"
+    assert updated.json()["command"] == "version"
+
+    assert client.post(
+        "/api/macros",
+        json={"label": "Global", "command": "global-status"},
+    ).status_code == 201
+    assert len(client.get("/api/aliases/Bench/macros").json()) == 2
+
+    backup = client.get("/api/backup")
+    assert backup.status_code == 200
+    assert backup.headers["content-disposition"] == (
+        'attachment; filename="rpi-semiautomator-backup.yaml"'
+    )
+    assert yaml.safe_load(backup.content) == {
+        "favorites": [],
+        "macros": [
+            {
+                "label": "Version",
+                "command": "version",
+                "raw": False,
+                "device": port.device,
+                "category": "System",
+            },
+            {
+                "label": "Global",
+                "command": "global-status",
+                "raw": False,
+                "device": None,
+            },
+        ],
+    }
+
+    assert client.delete(
+        "/api/macros/Version", params={"device": port.device}
+    ).json() == {"ok": True}
+    assert [macro.label for macro in main_module.user_macros] == ["Global"]
+    assert client.delete("/api/macros/missing").status_code == 404
+
+    monkeypatch.setenv("RPI_SEMIAUTOMATOR_API_TOKEN", "test-token")
+    assert client.get("/api/backup").status_code == 401
+    assert client.get("/api/backup", params={"token": "test-token"}).status_code == 200
+
+
 def test_alias_websocket_sends_commands_to_configured_interface(monkeypatch):
     import main as main_module
 

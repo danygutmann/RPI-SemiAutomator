@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Dict
 
-from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from nicegui import app, ui
 
 from config import (
@@ -726,6 +726,59 @@ def _api_connection(device: str) -> SerialConnection:
     return connection
 
 
+def _api_macro_payload(macro: Macro) -> dict:
+    return {
+        "label": macro.label,
+        "command": macro.command,
+        "raw": macro.raw,
+        "device": macro.device,
+        "category": macro.category,
+    }
+
+
+def _api_macro_from_body(body: dict) -> Macro:
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="A JSON object is required")
+    label = body.get("label")
+    command = body.get("command")
+    raw = body.get("raw", False)
+    device = body.get("device")
+    category = body.get("category")
+    if device == "":
+        device = None
+    if category == "":
+        category = None
+    if not isinstance(label, str) or not label.strip():
+        raise HTTPException(status_code=400, detail="'label' is required")
+    if not isinstance(command, str) or not command.strip():
+        raise HTTPException(status_code=400, detail="'command' is required")
+    if not isinstance(raw, bool):
+        raise HTTPException(status_code=400, detail="'raw' must be a boolean")
+    if device is not None and not isinstance(device, str):
+        raise HTTPException(status_code=400, detail="'device' must be a string or null")
+    if device is not None and device not in _known_devices():
+        raise HTTPException(status_code=404, detail="Unknown device")
+    if category is not None and not isinstance(category, str):
+        raise HTTPException(status_code=400, detail="'category' must be a string or null")
+    normalized_category = (
+        "/".join(part.strip() for part in category.split("/") if part.strip())
+        if category
+        else None
+    )
+    return Macro(
+        label=label.strip(),
+        command=command.strip(),
+        raw=raw,
+        device=device,
+        category=normalized_category or None,
+    )
+
+
+def _reload_api_macros() -> None:
+    user_macros.clear()
+    user_macros.extend(load_macros())
+
+
 @app.get("/api/ports")
 def api_list_ports(request: Request) -> list[dict]:
     _check_api_token(_bearer(request))
@@ -743,6 +796,100 @@ def api_list_ports(request: Request) -> list[dict]:
             }
         )
     return result
+
+
+@app.get("/api/macros")
+def api_list_macros(request: Request, device: str | None = None) -> list[dict]:
+    """List macros, optionally showing those applicable to one interface."""
+    _check_api_token(_bearer(request))
+    if device is not None and device not in _known_devices():
+        raise HTTPException(status_code=404, detail="Unknown device")
+    macros = load_macros()
+    if device is not None:
+        macros = [macro for macro in macros if macro.device is None or macro.device == device]
+    return [_api_macro_payload(macro) for macro in macros]
+
+
+@app.get("/api/aliases/{alias}/macros")
+def api_list_alias_macros(alias: str, request: Request) -> list[dict]:
+    """List macros applicable to the interface identified by its alias."""
+    _check_api_token(_bearer(request))
+    device = _api_device_for_alias(alias)
+    macros = [
+        macro
+        for macro in load_macros()
+        if macro.device is None or macro.device == device
+    ]
+    return [_api_macro_payload(macro) for macro in macros]
+
+
+@app.post("/api/macros", status_code=201)
+async def api_create_macro(request: Request) -> dict:
+    _check_api_token(_bearer(request))
+    macro = _api_macro_from_body(await request.json())
+    if any(
+        existing.device == macro.device and existing.label == macro.label
+        for existing in load_macros()
+    ):
+        raise HTTPException(status_code=409, detail="Macro already exists")
+    save_macro(macro)
+    _reload_api_macros()
+    return _api_macro_payload(macro)
+
+
+@app.put("/api/macros")
+async def api_update_macro(request: Request) -> dict:
+    _check_api_token(_bearer(request))
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="A JSON object is required")
+    old_label = body.get("old_label")
+    old_device = body.get("old_device")
+    if old_device == "":
+        old_device = None
+    if not isinstance(old_label, str) or not old_label.strip():
+        raise HTTPException(status_code=400, detail="'old_label' is required")
+    if old_device is not None and not isinstance(old_device, str):
+        raise HTTPException(status_code=400, detail="'old_device' must be a string or null")
+    macro = _api_macro_from_body(body)
+    existing = load_macros()
+    if not any(
+        item.label == old_label.strip() and item.device == old_device
+        for item in existing
+    ):
+        raise HTTPException(status_code=404, detail="Macro not found")
+    if any(
+        item.label == macro.label
+        and item.device == macro.device
+        and (item.label != old_label.strip() or item.device != old_device)
+        for item in existing
+    ):
+        raise HTTPException(status_code=409, detail="A macro with that label already exists")
+    update_macro(old_label.strip(), old_device, macro)
+    _reload_api_macros()
+    return _api_macro_payload(macro)
+
+
+@app.delete("/api/macros/{label}")
+def api_delete_macro(label: str, request: Request, device: str | None = None) -> dict:
+    _check_api_token(_bearer(request))
+    if not any(
+        macro.label == label and macro.device == device for macro in load_macros()
+    ):
+        raise HTTPException(status_code=404, detail="Macro not found")
+    remove_macro(label, device)
+    _reload_api_macros()
+    return {"ok": True}
+
+
+@app.get("/api/backup")
+def api_backup(request: Request) -> Response:
+    _check_api_token(_bearer(request))
+    return Response(
+        content=backup_settings(),
+        media_type="application/x-yaml",
+        headers={"Content-Disposition": 'attachment; filename="rpi-semiautomator-backup.yaml"'},
+    )
 
 
 @app.get("/api/aliases")
