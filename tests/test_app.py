@@ -50,7 +50,7 @@ macros:
   - label: "Ping"
     command: "ping"
     raw: true
-    device: "/dev/ttyTEST0"
+    alias: "Test"
     category: "System/Status"
 """
     )
@@ -60,7 +60,7 @@ macros:
     ]
     assert config.macros[0].label == "Ping"
     assert config.macros[0].raw is True
-    assert config.macros[0].device == "/dev/ttyTEST0"
+    assert config.macros[0].alias == "Test"
     assert config.macros[0].category == "System/Status"
 
 
@@ -118,16 +118,18 @@ def test_remove_favorite_missing_device_is_noop(tmp_path):
 def test_save_macro_adds_and_updates_macro(tmp_path):
     macros_path = tmp_path / "macros.yaml"
     macro = __import__("config").Macro
-    save_macro(macro(label="Ping", command="ping"), macros_path)
-    save_macro(macro(label="Ping", command="ping -c1"), macros_path)
+    save_macro(macro(label="Ping", command="ping", alias="Bench"), macros_path)
+    save_macro(macro(label="Ping", command="ping -c1", alias="Bench"), macros_path)
 
-    assert load_macros(macros_path) == [macro(label="Ping", command="ping -c1")]
+    assert load_macros(macros_path) == [
+        macro(label="Ping", command="ping -c1", alias="Bench")
+    ]
 
 
 def test_macro_category_is_persisted_and_included_in_backup(tmp_path):
     macros_path = tmp_path / "macros.yaml"
     macro = __import__("config").Macro(
-        label="Boot", command="boot", category="System/Startup"
+        label="Boot", command="boot", alias="Bench", category="System/Startup"
     )
 
     save_macro(macro, macros_path)
@@ -140,47 +142,47 @@ def test_macro_category_is_persisted_and_included_in_backup(tmp_path):
             "label": "Boot",
             "command": "boot",
             "raw": False,
-            "device": None,
+            "alias": "Bench",
             "category": "System/Startup",
         }
     ]
 
 
-def test_save_macro_device_scoped_is_independent_of_global(tmp_path):
+def test_save_macro_alias_scopes_are_independent(tmp_path):
     macros_path = tmp_path / "macros.yaml"
     macro = __import__("config").Macro
-    save_macro(macro(label="Ping", command="ping"), macros_path)
-    save_macro(
-        macro(label="Ping", command="ping -c1", device="/dev/ttyTEST0"), macros_path
-    )
+    save_macro(macro(label="Ping", command="ping", alias="Bench"), macros_path)
+    save_macro(macro(label="Ping", command="ping -c1", alias="Console"), macros_path)
 
     loaded = load_macros(macros_path)
     assert len(loaded) == 2
-    assert macro(label="Ping", command="ping") in loaded
-    assert (
-        macro(label="Ping", command="ping -c1", device="/dev/ttyTEST0") in loaded
-    )
+    assert macro(label="Ping", command="ping", alias="Bench") in loaded
+    assert macro(label="Ping", command="ping -c1", alias="Console") in loaded
 
 
 def test_remove_macro_deletes_entry(tmp_path):
     macros_path = tmp_path / "macros.yaml"
     macro = __import__("config").Macro
-    save_macro(macro(label="Ping", command="ping"), macros_path)
-    save_macro(macro(label="Status", command="status"), macros_path)
+    save_macro(macro(label="Ping", command="ping", alias="Bench"), macros_path)
+    save_macro(macro(label="Status", command="status", alias="Bench"), macros_path)
 
-    remove_macro("Ping", path=macros_path)
+    remove_macro("Ping", "Bench", macros_path)
 
-    assert load_macros(macros_path) == [macro(label="Status", command="status")]
+    assert load_macros(macros_path) == [
+        macro(label="Status", command="status", alias="Bench")
+    ]
 
 
 def test_remove_macro_missing_entry_is_noop(tmp_path):
     macros_path = tmp_path / "macros.yaml"
     macro = __import__("config").Macro
-    save_macro(macro(label="Ping", command="ping"), macros_path)
+    save_macro(macro(label="Ping", command="ping", alias="Bench"), macros_path)
 
-    remove_macro("DoesNotExist", path=macros_path)
+    remove_macro("DoesNotExist", "Bench", macros_path)
 
-    assert load_macros(macros_path) == [macro(label="Ping", command="ping")]
+    assert load_macros(macros_path) == [
+        macro(label="Ping", command="ping", alias="Bench")
+    ]
 
 
 def test_backup_settings_includes_favorites_and_macros(tmp_path):
@@ -191,7 +193,7 @@ def test_backup_settings_includes_favorites_and_macros(tmp_path):
     save_favorite(
         port_preset(name="Test", device="/dev/ttyTEST0", baudrate=9600), favorites_path
     )
-    save_macro(macro(label="Ping", command="ping"), macros_path)
+    save_macro(macro(label="Ping", command="ping", alias="Test"), macros_path)
 
     content = backup_settings(favorites_path, macros_path)
     data = yaml.safe_load(content)
@@ -200,7 +202,7 @@ def test_backup_settings_includes_favorites_and_macros(tmp_path):
         {"name": "Test", "device": "/dev/ttyTEST0", "baudrate": 9600}
     ]
     assert data["macros"] == [
-        {"label": "Ping", "command": "ping", "raw": False, "device": None}
+        {"label": "Ping", "command": "ping", "raw": False, "alias": "Test"}
     ]
 
 
@@ -362,7 +364,7 @@ def test_macro_api_crud_and_backup(monkeypatch, tmp_path):
             "label": "Status",
             "command": "status",
             "raw": True,
-            "device": port.device,
+            "alias": "Bench",
             "category": " System / Info ",
         },
     )
@@ -371,24 +373,27 @@ def test_macro_api_crud_and_backup(monkeypatch, tmp_path):
         "label": "Status",
         "command": "status",
         "raw": True,
-        "device": port.device,
+        "alias": "Bench",
         "category": "System/Info",
     }
     assert main_module.user_macros == [__import__("config").Macro(**created.json())]
-    assert client.get("/api/macros", params={"device": port.device}).json() == [
+    assert client.get("/api/macros", params={"alias": "Bench"}).json() == [
         created.json()
     ]
     assert client.get("/api/aliases/Bench/macros").json() == [created.json()]
     assert client.post("/api/macros", json=created.json()).status_code == 409
+    assert client.post(
+        "/api/macros", json={"label": "No alias", "command": "status"}
+    ).status_code == 400
 
     updated = client.put(
         "/api/macros",
         json={
             "old_label": "Status",
-            "old_device": port.device,
+            "old_alias": "Bench",
             "label": "Version",
             "command": "version",
-            "device": port.device,
+            "alias": "Bench",
             "category": "System",
         },
     )
@@ -396,11 +401,7 @@ def test_macro_api_crud_and_backup(monkeypatch, tmp_path):
     assert updated.json()["label"] == "Version"
     assert updated.json()["command"] == "version"
 
-    assert client.post(
-        "/api/macros",
-        json={"label": "Global", "command": "global-status"},
-    ).status_code == 201
-    assert len(client.get("/api/aliases/Bench/macros").json()) == 2
+    assert len(client.get("/api/aliases/Bench/macros").json()) == 1
 
     backup = client.get("/api/backup")
     assert backup.status_code == 200
@@ -414,23 +415,19 @@ def test_macro_api_crud_and_backup(monkeypatch, tmp_path):
                 "label": "Version",
                 "command": "version",
                 "raw": False,
-                "device": port.device,
+                "alias": "Bench",
                 "category": "System",
-            },
-            {
-                "label": "Global",
-                "command": "global-status",
-                "raw": False,
-                "device": None,
             },
         ],
     }
 
     assert client.delete(
-        "/api/macros/Version", params={"device": port.device}
+        "/api/macros/Version", params={"alias": "Bench"}
     ).json() == {"ok": True}
-    assert [macro.label for macro in main_module.user_macros] == ["Global"]
-    assert client.delete("/api/macros/missing").status_code == 404
+    assert main_module.user_macros == []
+    assert client.delete(
+        "/api/macros/missing", params={"alias": "Bench"}
+    ).status_code == 404
 
     monkeypatch.setenv("RPI_SEMIAUTOMATOR_API_TOKEN", "test-token")
     assert client.get("/api/backup").status_code == 401

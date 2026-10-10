@@ -15,7 +15,7 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 - Live-Konsole je Port: In die Konsole klicken und direkt tippen (Enter, Tab, Pfeiltasten, Strg+Taste werden direkt gesendet; leeres Enter möglich), mit Button zum Leeren der Anzeige; das Terminal-Fenster ist in der Höhe per Ziehen am unteren Rand verstellbar
 - Download des aktuellen Logs als lokale Textdatei
 - Freitext-Eingabe zum Senden beliebiger Befehle
-- Individuelle Makros (global oder je Schnittstelle) im Burger-Menü; Ordner
+- Individuelle, aliasgebundene Makros im Burger-Menü; Ordner
   können über `/` mehrstufig verschachtelt und ein- oder ausgeklappt werden
 - Eigene **Einstellungen**-Seite zum Hinzufügen/Entfernen von Favoriten sowie zum Sichern (Backup) und Neuladen der gespeicherten Einstellungen
 - Läuft als Docker-Container, geeignet für den Raspberry Pi
@@ -44,13 +44,13 @@ Favoriten werden in `data/favorites.yaml` gespeichert (alternativ über
 wieder entfernt werden.
 
 Makros werden individuell über das Burger-Menü angelegt (Rechtsklick auf einen
-Makro-Ordner, einen Eintrag oder
-den freien Bereich im Makro-Burger-Menü) und in
-`data/macros.yaml` gespeichert (alternativ über
-`RPI_SEMIAUTOMATOR_MACROS`); ein Makro kann global oder nur für die
-Schnittstelle gelten, die beim Anlegen ausgewählt ist. Ein Ordnerpfad wie
-`System/Start` erstellt eine verschachtelte Makrostruktur. Makros werden im
-Burger-Menü für den oben ausgewählten Schnittstellen-Tab angezeigt und dort
+Makro-Ordner, einen Eintrag oder den freien Bereich im Makro-Burger-Menü) und
+in `data/macros.yaml` gespeichert (alternativ über
+`RPI_SEMIAUTOMATOR_MACROS`). Jedes Makro ist ausschließlich an den Alias der
+aktiven Schnittstelle gebunden, nicht an den Gerätepfad; dadurch kann derselbe
+Alias auch auf Systemen mit abweichenden Gerätepfaden verwendet werden. Ein
+Ordnerpfad wie `System/Start` erstellt eine verschachtelte Makrostruktur.
+Makros werden nur beim passenden Alias im Burger-Menü angezeigt und dort
 ausgeführt; Bearbeiten und Löschen erfolgt weiterhin in den Einstellungen.
 Es gibt keine vordefinierten Standard-Makros.
 
@@ -120,23 +120,20 @@ Optional absicherbar mit `RPI_SEMIAUTOMATOR_API_TOKEN` (Bearer-Token im `Authori
 - `POST /api/aliases/{alias}/send` – wie `/api/send`, aber statt `device`
   wird der Alias im URL-Pfad verwendet; der JSON-Body enthält
   `{"command": "...", "raw": false}`
-- `WS /api/aliases/{alias}/ws` – WebSocket wie `/api/ws`, adressiert über den
-  Alias statt den Gerätepfad
-- `GET /api/macros` – alle Makros; mit `?device=/dev/ttyUSB0` werden globale
-  Makros und Makros für diese Schnittstelle zurückgegeben
-- `GET /api/aliases/{alias}/macros` – globale und schnittstellenspezifische
-  Makros für den angegebenen Alias
+- `WS /api/aliases/{alias}/ws` – WebSocket-Stream und Eingabe wie `/api/ws`,
+  adressiert über den Alias statt den Gerätepfad
+- `GET /api/macros` – alle aliasgebundenen Makros; mit `?alias=Bench` nur die
+  Makros des angegebenen Alias
+- `GET /api/aliases/{alias}/macros` – Makros für den angegebenen Alias
 - `POST /api/macros` – Makro anlegen, zum Beispiel:
-  `{"label":"Status","command":"status","raw":false,"device":"/dev/ttyUSB0","category":"System"}`
-  (`device` und `category` dürfen `null` sein oder fehlen; bei gleichem Namen
-  und Geltungsbereich wird HTTP 409 zurückgegeben)
+  `{"label":"Status","command":"status","raw":false,"alias":"Bench","category":"System"}`
+  (`alias` ist erforderlich; bei gleichem Namen und Alias wird HTTP 409
+  zurückgegeben)
 - `PUT /api/macros` – Makro anhand seiner bisherigen Angaben bearbeiten. Der
   Body enthält dieselben Felder wie beim Anlegen sowie `old_label` und
-  `old_device` (bisheriger Name und bisherige Schnittstelle; für globale
-  Makros `null`). Ein nicht gefundenes Makro ergibt HTTP 404.
-- `DELETE /api/macros/{label}?device=/dev/ttyUSB0` – Makro löschen; für ein
-  globales Makro den Parameter `device` weglassen. Ein nicht gefundenes Makro
-  ergibt HTTP 404.
+  `old_alias`. Ein nicht gefundenes Makro ergibt HTTP 404.
+- `DELETE /api/macros/{label}?alias=Bench` – Makro für den Alias löschen. Ein
+  nicht gefundenes Makro ergibt HTTP 404.
 - `GET /api/backup` – lädt ein YAML-Backup mit Favoriten und Makros als
   `rpi-semiautomator-backup.yaml` herunter.
 
