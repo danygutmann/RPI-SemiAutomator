@@ -12,6 +12,7 @@ simple and avoids cross-thread UI updates.
 """
 from __future__ import annotations
 
+import codecs
 import glob
 import threading
 import time
@@ -111,6 +112,7 @@ class SerialConnection:
 
     def _read_loop(self) -> None:
         buffer = ""
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         while not self._stop_event.is_set():
             try:
                 with self._lock:
@@ -129,7 +131,11 @@ class SerialConnection:
             if not chunk:
                 continue
 
-            buffer += chunk.decode("utf-8", errors="replace")
+            text = decoder.decode(chunk)
+            if not text:
+                continue
+            self._notify("rx", text)
+            buffer += text
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 self._append_line(line.rstrip("\r"))
@@ -143,7 +149,6 @@ class SerialConnection:
             del self.lines[: len(self.lines) - self.max_lines]
         if self.on_data is not None:
             self.on_data(line)
-        self._notify("rx", line)
 
 
 class SerialManager:

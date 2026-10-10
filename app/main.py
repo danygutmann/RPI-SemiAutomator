@@ -950,7 +950,8 @@ async def _api_ws_for_device(
 ) -> None:
     """Stream RX/TX of ``device`` as JSON and accept input.
 
-    Server -> client: ``{"direction": "rx"|"tx", "text": "..."}``.
+    Server -> client: ``{"direction": "rx"|"tx", "text": "..."}``; rx text is
+    streamed as raw chunks (no line buffering) so prompts appear immediately.
     Client -> server: plain text or ``{"command": "...", "raw": false}``.
     """
     auth = websocket.headers.get("authorization", "")
@@ -976,6 +977,11 @@ async def _api_ws_for_device(
             await websocket.send_json(await queue.get())
 
     connection.subscribe(listener)
+    if not connection.is_open:
+        try:
+            connection.connect()
+        except Exception as exc:  # noqa: BLE001
+            await websocket.send_json({"error": str(exc)})
     sender = asyncio.create_task(pump_out())
     try:
         while True:
