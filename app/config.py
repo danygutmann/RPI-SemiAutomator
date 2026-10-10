@@ -40,6 +40,7 @@ class Macro:
     command: str
     raw: bool = False
     device: Optional[str] = None
+    category: Optional[str] = None
 
 
 @dataclass
@@ -66,32 +67,11 @@ def _macros_path() -> Path:
 def load_config(path: Path | None = None) -> AppConfig:
     """Load the application configuration from ``path`` (or the default)."""
     config_path = path or _config_path()
-
     if not config_path.exists():
         return AppConfig()
-
-    with config_path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-
-    ports = [
-        PortPreset(
-            name=entry.get("name", entry.get("device", "port")),
-            device=entry["device"],
-            baudrate=int(entry.get("baudrate", 115200)),
-        )
-        for entry in raw.get("ports", []) or []
-    ]
-
-    macros = [
-        Macro(
-            label=entry["label"],
-            command=entry["command"],
-            raw=bool(entry.get("raw", False)),
-            device=entry.get("device"),
-        )
-        for entry in raw.get("macros", []) or []
-    ]
-
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    ports = [PortPreset(**item) for item in data.get("ports", [])]
+    macros = [Macro(**item) for item in data.get("macros", [])]
     return AppConfig(ports=ports, macros=macros)
 
 
@@ -100,45 +80,21 @@ def load_favorites(path: Path | None = None) -> List[PortPreset]:
     favorites_path = path or _favorites_path()
     if not favorites_path.exists():
         return []
-
-    with favorites_path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-
-    return [
-        PortPreset(
-            name=entry.get("name", entry.get("device", "port")),
-            device=entry["device"],
-            baudrate=int(entry.get("baudrate", 115200)),
-        )
-        for entry in raw.get("ports", []) or []
-    ]
+    data = yaml.safe_load(favorites_path.read_text(encoding="utf-8")) or {}
+    return [PortPreset(**item) for item in data.get("ports", [])]
 
 
 def _write_favorites(favorites: dict[str, PortPreset], favorites_path: Path) -> None:
     favorites_path.parent.mkdir(parents=True, exist_ok=True)
-    with favorites_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(
-            {
-                "ports": [
-                    {
-                        "name": favorite.name,
-                        "device": favorite.device,
-                        "baudrate": favorite.baudrate,
-                    }
-                    for favorite in favorites.values()
-                ]
-            },
-            handle,
-            allow_unicode=True,
-            sort_keys=False,
-        )
+    payload = {"ports": [vars(item) for item in favorites.values()]}
+    favorites_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def save_favorite(preset: PortPreset, path: Path | None = None) -> None:
     """Add or update one favorite in the writable user configuration."""
     favorites_path = path or _favorites_path()
     with _favorites_lock:
-        favorites = {favorite.device: favorite for favorite in load_favorites(favorites_path)}
+        favorites = {item.device: item for item in load_favorites(favorites_path)}
         favorites[preset.device] = preset
         _write_favorites(favorites, favorites_path)
 
@@ -147,9 +103,10 @@ def remove_favorite(device: str, path: Path | None = None) -> None:
     """Remove one favorite (by device path) from the writable user configuration."""
     favorites_path = path or _favorites_path()
     with _favorites_lock:
-        favorites = {favorite.device: favorite for favorite in load_favorites(favorites_path)}
-        favorites.pop(device, None)
-        _write_favorites(favorites, favorites_path)
+        favorites = {item.device: item for item in load_favorites(favorites_path)}
+        if device in favorites:
+            del favorites[device]
+            _write_favorites(favorites, favorites_path)
 
 
 def load_macros(path: Path | None = None) -> List[Macro]:
@@ -157,51 +114,25 @@ def load_macros(path: Path | None = None) -> List[Macro]:
     macros_path = path or _macros_path()
     if not macros_path.exists():
         return []
-
-    with macros_path.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-
-    return [
-        Macro(
-            label=entry["label"],
-            command=entry["command"],
-            raw=bool(entry.get("raw", False)),
-            device=entry.get("device"),
-        )
-        for entry in raw.get("macros", []) or []
-    ]
+    data = yaml.safe_load(macros_path.read_text(encoding="utf-8")) or {}
+    return [Macro(**item) for item in data.get("macros", [])]
 
 
 def _macro_key(macro: Macro) -> tuple[str | None, str]:
-    return (macro.device, macro.label)
+    return macro.device, macro.label
 
 
 def _write_macros(macros: dict[tuple[str | None, str], Macro], macros_path: Path) -> None:
     macros_path.parent.mkdir(parents=True, exist_ok=True)
-    with macros_path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(
-            {
-                "macros": [
-                    {
-                        "label": macro.label,
-                        "command": macro.command,
-                        "raw": macro.raw,
-                        "device": macro.device,
-                    }
-                    for macro in macros.values()
-                ]
-            },
-            handle,
-            allow_unicode=True,
-            sort_keys=False,
-        )
+    payload = {"macros": [vars(item) for item in macros.values()]}
+    macros_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def save_macro(macro: Macro, path: Path | None = None) -> None:
     """Add or update one user-defined macro in the writable user configuration."""
     macros_path = path or _macros_path()
     with _macros_lock:
-        macros = {_macro_key(existing): existing for existing in load_macros(macros_path)}
+        macros = {_macro_key(item): item for item in load_macros(macros_path)}
         macros[_macro_key(macro)] = macro
         _write_macros(macros, macros_path)
 
@@ -210,9 +141,11 @@ def remove_macro(label: str, device: str | None = None, path: Path | None = None
     """Remove one user-defined macro (by label and optional device) from storage."""
     macros_path = path or _macros_path()
     with _macros_lock:
-        macros = {_macro_key(existing): existing for existing in load_macros(macros_path)}
-        macros.pop((device, label), None)
-        _write_macros(macros, macros_path)
+        macros = {_macro_key(item): item for item in load_macros(macros_path)}
+        key = (device, label)
+        if key in macros:
+            del macros[key]
+            _write_macros(macros, macros_path)
 
 
 def update_macro(
@@ -241,44 +174,21 @@ def update_macro(
         _write_macros(result, macros_path)
 
 
-def set_device_macros(
-    device: str, macros: List[Macro], path: Path | None = None
-) -> None:
-    """Replace all macros scoped to ``device`` with ``macros`` (global ones are kept)."""
-    macros_path = path or _macros_path()
-    with _macros_lock:
-        result = {
-            _macro_key(item): item for item in load_macros(macros_path) if item.device != device
-        }
-        for macro in macros:
-            macro.device = device
-            result[_macro_key(macro)] = macro
-        _write_macros(result, macros_path)
-
-
-def backup_settings(
-    favorites_path: Path | None = None, macros_path: Path | None = None
-) -> bytes:
-    """Return a single YAML document bundling the current favorites and macros.
-
-    Used by the Settings page to let the user download a backup of all
-    user-editable settings (favorites and individual macros).
-    """
-    favorites = load_favorites(favorites_path)
-    macros = load_macros(macros_path)
-    payload = {
-        "favorites": [
-            {"name": favorite.name, "device": favorite.device, "baudrate": favorite.baudrate}
-            for favorite in favorites
-        ],
-        "macros": [
-            {
-                "label": macro.label,
-                "command": macro.command,
-                "raw": macro.raw,
-                "device": macro.device,
-            }
-            for macro in macros
-        ],
-    }
-    return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).encode("utf-8")
++def set_device_macros(
++    device: str, macros: List[Macro], path: Path | None = None
++) -> None:
++    """Replace all macros scoped to ``device`` with ``macros`` (global ones are kept)."""
++    macros_path = path or _macros_path()
++    with _macros_lock:
++        result = {
++            _macro_key(item): item for item in load_macros(macros_path) if item.device != device
++        }
++        for macro in macros:
++            macro.device = device
++            result[_macro_key(macro)] = macro
++        _write_macros(result, macros_path)
++
++
+ def backup_settings(
+     favorites_path: Path | None = None, macros_path: Path | None = None
+ ) -> bytes:
