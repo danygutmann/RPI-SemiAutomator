@@ -481,3 +481,22 @@ def test_alias_websocket_sends_commands_to_configured_interface(monkeypatch):
         websocket.send_text("ping")
         assert websocket.receive_json() == {"direction": "tx", "text": "ping"}
     assert sent == ["ping"]
+
+
+def test_relay_and_psu_api():
+    import main as main_module
+
+    client = TestClient(main_module.app)
+    assert len(client.get("/api/relay").json()) == 8
+    assert client.put("/api/relay/1", json={"on": True, "alias": "pump"}).json()["on"] is True
+    assert client.get("/api/relay/pump").json()["channel"] == 1
+    assert client.put("/api/relay/2", json={"alias": "pump"}).status_code == 409
+    assert all(c["on"] for c in client.post("/api/relay/all", json={"on": True}).json())
+    assert not any(c["on"] for c in client.post("/api/relay/all", json={"on": False}).json())
+    assert client.get("/api/relay/99").status_code == 404
+
+    assert client.put("/api/psu", json={"output": True, "current_limit": 5, "voltage": 12}).json()[
+        "measured_current"
+    ] == 5
+    assert client.put("/api/psu", json={"voltage": 13}).status_code == 400
+    assert client.put("/api/psu", json={"current_limit": 41}).status_code == 400
