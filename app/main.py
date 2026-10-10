@@ -105,10 +105,10 @@ def _favorite_devices() -> list[str]:
     return [favorite.device for favorite in favorites]
 
 
-def _macros_for(device: str) -> list[Macro]:
+def _macros_for(alias: str) -> list[Macro]:
     # Only individually created macros are shown; there are no predefined
     # "standard" macros anymore.
-    return [macro for macro in user_macros if macro.device is None or macro.device == device]
+    return [macro for macro in user_macros if macro.alias == alias]
 
 
 def build_port_card(device: str, baudrate: int):
@@ -282,15 +282,16 @@ def index() -> None:
             macro_name_input = ui.input(label="Name").classes("w-64")
             macro_command_input = ui.input(label="Kommando").classes("w-64")
             macro_category_input = ui.input(label="Ordner (mit / verschachteln)").classes("w-64")
-            macro_device_only = ui.checkbox(
-                "Nur für die aktive Schnittstelle", value=False
-            )
+            macro_alias_label = ui.label()
             with ui.row().classes("justify-end w-full gap-2"):
                 ui.button("Abbrechen", on_click=macro_dialog.close).props("flat")
                 confirm_macro_button = ui.button("Speichern", icon="add")
 
         def open_macro_dialog(category: str = "") -> None:
             macro_category_input.value = category
+            device = page_state["active_device"]
+            alias = _device_aliases().get(device) if device else None
+            macro_alias_label.set_text(f"Alias: {alias or 'unbekannt'}")
             macro_dialog.open()
 
         def confirm_macro() -> None:
@@ -299,8 +300,15 @@ def index() -> None:
             if not name or not command:
                 ui.notify("Name und Kommando sind erforderlich", type="warning")
                 return
-            if macro_device_only.value and page_state["active_device"] is None:
+            device = page_state["active_device"]
+            alias = _device_aliases().get(device) if device else None
+            if not alias:
                 ui.notify("Keine aktive Schnittstelle ausgewählt", type="warning")
+                return
+            try:
+                _api_device_for_alias(alias)
+            except HTTPException:
+                ui.notify("Der Alias ist nicht eindeutig", type="warning")
                 return
             category = "/".join(
                 part.strip()
@@ -312,11 +320,7 @@ def index() -> None:
                     Macro(
                         label=name,
                         command=command,
-                        device=(
-                            page_state["active_device"]
-                            if macro_device_only.value
-                            else None
-                        ),
+                        alias=alias,
                         category=category or None,
                     )
                 )
@@ -325,7 +329,6 @@ def index() -> None:
                 macro_dialog.close()
                 macro_name_input.value = ""
                 macro_command_input.value = ""
-                macro_device_only.value = False
                 render_macro_tree()
                 ui.notify(f"Makro '{name}' gespeichert", type="positive")
             except Exception as exc:  # noqa: BLE001
@@ -336,9 +339,8 @@ def index() -> None:
         def render_macro_tree() -> None:
             macros_container.clear()
             device = page_state["active_device"]
-            macros = _macros_for(device) if device else [
-                macro for macro in user_macros if macro.device is None
-            ]
+            alias = _device_aliases().get(device) if device else None
+            macros = _macros_for(alias) if alias else []
             root = {"groups": {}, "macros": []}
             for macro in macros:
                 node = root
@@ -365,7 +367,8 @@ def index() -> None:
                     def make_sender(item: Macro):
                         def send() -> None:
                             selected = page_state["active_device"]
-                            if selected is None:
+                            selected_alias = _device_aliases().get(selected) if selected else None
+                            if selected is None or selected_alias != item.alias:
                                 ui.notify("Keine aktive Schnittstelle ausgewählt", type="warning")
                                 return
                             connection = manager.get_or_create(
@@ -591,7 +594,7 @@ def settings_page() -> None:
                     ui.label("Keine Makros.").classes("text-sm text-grey-6")
                     return
                 for macro in list(user_macros):
-                    scope = macro.device or "alle Schnittstellen"
+                    scope = macro.alias or "Alias nicht zugeordnet"
                     with ui.row().classes("items-center w-full justify-between"):
                         ui.label(f"{macro.label} — {macro.command} ({scope})").classes(
                             "text-sm"
@@ -609,10 +612,15 @@ def settings_page() -> None:
                                         label="Ordner (mit / verschachteln)",
                                         value=m.category or "",
                                     ).classes("w-64")
-                                    device_select = ui.select(
-                                        options={"": "Alle Schnittstellen", **_device_options()},
-                                        label="Schnittstelle",
-                                        value=m.device or "",
+                                    alias_options = {
+                                        alias: alias for alias in _device_aliases().values()
+                                    }
+                                    if m.alias and m.alias not in alias_options:
+                                        alias_options[m.alias] = m.alias
+                                    alias_select = ui.select(
+                                        options=alias_options,
+                                        label="Alias",
+                                        value=m.alias,
                                     ).classes("w-64")
 
                                     def save() -> None:
@@ -624,14 +632,23 @@ def settings_page() -> None:
                                                 type="warning",
                                             )
                                             return
+                                        alias = alias_select.value
+                                        if not alias:
+                                            ui.notify("Ein Alias ist erforderlich", type="warning")
+                                            return
+                                        try:
+                                            _api_device_for_alias(alias)
+                                        except HTTPException:
+                                            ui.notify("Der Alias ist nicht eindeutig", type="warning")
+                                            return
                                         update_macro(
                                             m.label,
-                                            m.device,
+                                            m.alias,
                                             Macro(
                                                 label=name,
                                                 command=command,
                                                 raw=m.raw,
-                                                device=device_select.value or None,
+                                                alias=alias,
                                                 category="/".join(
                                                     part.strip()
                                                     for part in (category_input.value or "").split("/")
@@ -655,7 +672,7 @@ def settings_page() -> None:
 
                         def make_delete_macro(m: Macro = macro):
                             def _delete() -> None:
-                                remove_macro(m.label, m.device)
+                                remove_macro(m.label, m.alias)
                                 user_macros.clear()
                                 user_macros.extend(load_macros())
                                 render_macros_list()
@@ -731,7 +748,7 @@ def _api_macro_payload(macro: Macro) -> dict:
         "label": macro.label,
         "command": macro.command,
         "raw": macro.raw,
-        "device": macro.device,
+        "alias": macro.alias,
         "category": macro.category,
     }
 
@@ -742,10 +759,8 @@ def _api_macro_from_body(body: dict) -> Macro:
     label = body.get("label")
     command = body.get("command")
     raw = body.get("raw", False)
-    device = body.get("device")
+    alias = body.get("alias")
     category = body.get("category")
-    if device == "":
-        device = None
     if category == "":
         category = None
     if not isinstance(label, str) or not label.strip():
@@ -754,10 +769,9 @@ def _api_macro_from_body(body: dict) -> Macro:
         raise HTTPException(status_code=400, detail="'command' is required")
     if not isinstance(raw, bool):
         raise HTTPException(status_code=400, detail="'raw' must be a boolean")
-    if device is not None and not isinstance(device, str):
-        raise HTTPException(status_code=400, detail="'device' must be a string or null")
-    if device is not None and device not in _known_devices():
-        raise HTTPException(status_code=404, detail="Unknown device")
+    if not isinstance(alias, str) or not alias.strip():
+        raise HTTPException(status_code=400, detail="'alias' is required")
+    _api_device_for_alias(alias.strip())
     if category is not None and not isinstance(category, str):
         raise HTTPException(status_code=400, detail="'category' must be a string or null")
     normalized_category = (
@@ -769,7 +783,7 @@ def _api_macro_from_body(body: dict) -> Macro:
         label=label.strip(),
         command=command.strip(),
         raw=raw,
-        device=device,
+        alias=alias.strip(),
         category=normalized_category or None,
     )
 
@@ -799,14 +813,15 @@ def api_list_ports(request: Request) -> list[dict]:
 
 
 @app.get("/api/macros")
-def api_list_macros(request: Request, device: str | None = None) -> list[dict]:
+def api_list_macros(request: Request, alias: str | None = None) -> list[dict]:
     """List macros, optionally showing those applicable to one interface."""
     _check_api_token(_bearer(request))
-    if device is not None and device not in _known_devices():
-        raise HTTPException(status_code=404, detail="Unknown device")
     macros = load_macros()
-    if device is not None:
-        macros = [macro for macro in macros if macro.device is None or macro.device == device]
+    if alias is not None:
+        _api_device_for_alias(alias)
+        macros = [macro for macro in macros if macro.alias == alias]
+    else:
+        macros = [macro for macro in macros if macro.alias is not None]
     return [_api_macro_payload(macro) for macro in macros]
 
 
@@ -814,11 +829,11 @@ def api_list_macros(request: Request, device: str | None = None) -> list[dict]:
 def api_list_alias_macros(alias: str, request: Request) -> list[dict]:
     """List macros applicable to the interface identified by its alias."""
     _check_api_token(_bearer(request))
-    device = _api_device_for_alias(alias)
+    _api_device_for_alias(alias)
     macros = [
         macro
         for macro in load_macros()
-        if macro.device is None or macro.device == device
+        if macro.alias == alias
     ]
     return [_api_macro_payload(macro) for macro in macros]
 
@@ -828,7 +843,7 @@ async def api_create_macro(request: Request) -> dict:
     _check_api_token(_bearer(request))
     macro = _api_macro_from_body(await request.json())
     if any(
-        existing.device == macro.device and existing.label == macro.label
+        existing.alias == macro.alias and existing.label == macro.label
         for existing in load_macros()
     ):
         raise HTTPException(status_code=409, detail="Macro already exists")
@@ -844,40 +859,39 @@ async def api_update_macro(request: Request) -> dict:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="A JSON object is required")
     old_label = body.get("old_label")
-    old_device = body.get("old_device")
-    if old_device == "":
-        old_device = None
+    old_alias = body.get("old_alias")
     if not isinstance(old_label, str) or not old_label.strip():
         raise HTTPException(status_code=400, detail="'old_label' is required")
-    if old_device is not None and not isinstance(old_device, str):
-        raise HTTPException(status_code=400, detail="'old_device' must be a string or null")
+    if old_alias is not None and not isinstance(old_alias, str):
+        raise HTTPException(status_code=400, detail="'old_alias' must be a string or null")
     macro = _api_macro_from_body(body)
     existing = load_macros()
     if not any(
-        item.label == old_label.strip() and item.device == old_device
+        item.label == old_label.strip() and item.alias == old_alias
         for item in existing
     ):
         raise HTTPException(status_code=404, detail="Macro not found")
     if any(
         item.label == macro.label
-        and item.device == macro.device
-        and (item.label != old_label.strip() or item.device != old_device)
+        and item.alias == macro.alias
+        and (item.label != old_label.strip() or item.alias != old_alias)
         for item in existing
     ):
         raise HTTPException(status_code=409, detail="A macro with that label already exists")
-    update_macro(old_label.strip(), old_device, macro)
+    update_macro(old_label.strip(), old_alias, macro)
     _reload_api_macros()
     return _api_macro_payload(macro)
 
 
 @app.delete("/api/macros/{label}")
-def api_delete_macro(label: str, request: Request, device: str | None = None) -> dict:
+def api_delete_macro(label: str, request: Request, alias: str) -> dict:
     _check_api_token(_bearer(request))
+    _api_device_for_alias(alias)
     if not any(
-        macro.label == label and macro.device == device for macro in load_macros()
+        macro.label == label and macro.alias == alias for macro in load_macros()
     ):
         raise HTTPException(status_code=404, detail="Macro not found")
-    remove_macro(label, device)
+    remove_macro(label, alias)
     _reload_api_macros()
     return {"ok": True}
 
