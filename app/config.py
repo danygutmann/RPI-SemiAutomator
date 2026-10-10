@@ -39,7 +39,7 @@ class Macro:
     label: str
     command: str
     raw: bool = False
-    device: Optional[str] = None
+    alias: Optional[str] = None
     category: Optional[str] = None
 
 
@@ -88,7 +88,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             label=entry["label"],
             command=entry["command"],
             raw=bool(entry.get("raw", False)),
-            device=entry.get("device"),
+            alias=entry.get("alias"),
             category=entry.get("category"),
         )
         for entry in raw.get("macros", []) or []
@@ -168,7 +168,7 @@ def load_macros(path: Path | None = None) -> List[Macro]:
             label=entry["label"],
             command=entry["command"],
             raw=bool(entry.get("raw", False)),
-            device=entry.get("device"),
+            alias=entry.get("alias"),
             category=entry.get("category"),
         )
         for entry in raw.get("macros", []) or []
@@ -176,7 +176,7 @@ def load_macros(path: Path | None = None) -> List[Macro]:
 
 
 def _macro_key(macro: Macro) -> tuple[str | None, str]:
-    return (macro.device, macro.label)
+    return (macro.alias, macro.label)
 
 
 def _write_macros(macros: dict[tuple[str | None, str], Macro], macros_path: Path) -> None:
@@ -189,7 +189,7 @@ def _write_macros(macros: dict[tuple[str | None, str], Macro], macros_path: Path
                         "label": macro.label,
                         "command": macro.command,
                         "raw": macro.raw,
-                        "device": macro.device,
+                        "alias": macro.alias,
                         **({"category": macro.category} if macro.category else {}),
                     }
                     for macro in macros.values()
@@ -210,18 +210,18 @@ def save_macro(macro: Macro, path: Path | None = None) -> None:
         _write_macros(macros, macros_path)
 
 
-def remove_macro(label: str, device: str | None = None, path: Path | None = None) -> None:
-    """Remove one user-defined macro (by label and optional device) from storage."""
+def remove_macro(label: str, alias: str | None = None, path: Path | None = None) -> None:
+    """Remove one user-defined macro (by label and alias) from storage."""
     macros_path = path or _macros_path()
     with _macros_lock:
         macros = {_macro_key(existing): existing for existing in load_macros(macros_path)}
-        macros.pop((device, label), None)
+        macros.pop((alias, label), None)
         _write_macros(macros, macros_path)
 
 
 def update_macro(
     old_label: str,
-    old_device: str | None,
+    old_alias: str | None,
     macro: Macro,
     path: Path | None = None,
 ) -> None:
@@ -229,7 +229,7 @@ def update_macro(
     macros_path = path or _macros_path()
     with _macros_lock:
         existing = load_macros(macros_path)
-        old_key = (old_device, old_label)
+        old_key = (old_alias, old_label)
         new_key = _macro_key(macro)
         result: dict[tuple[str | None, str], Macro] = {}
         replaced = False
@@ -265,7 +265,7 @@ def backup_settings(
                 "label": macro.label,
                 "command": macro.command,
                 "raw": macro.raw,
-                "device": macro.device,
+                "alias": macro.alias,
                 **({"category": macro.category} if macro.category else {}),
             }
             for macro in macros
