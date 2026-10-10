@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+from collections import deque
 from pathlib import Path
 from typing import Dict
 
@@ -29,6 +30,7 @@ from config import (
     save_macro,
     update_macro,
 )
+from panels import nav, register_api
 from serial_manager import SerialConnection, SerialManager
 
 config = load_config()
@@ -148,86 +150,39 @@ def build_port_card(device: str, baudrate: int):
                 "outline"
             )
 
-        log = ui.log(max_lines=500).classes("w-full flex-grow").style(
-            "resize: vertical; overflow: auto; min-height: 150px;"
-        )
-        size_key = json.dumps(f"rpi-semiautomator-logheight:{device}")
-        ui.run_javascript(
-            f"""
-            const el = document.getElementById('c{log.id}');
-            if (el) {{
-                const saved = localStorage.getItem({size_key});
-                if (saved) el.style.height = saved;
-                let timer = null;
-                new ResizeObserver(() => {{
-                    clearTimeout(timer);
-                    timer = setTimeout(() => {{
-                        if (el.style.height) localStorage.setItem({size_key}, el.style.height);
-                    }}, 300);
-                }}).observe(el);
-            }}
-            """
-        )
-        last_rendered_count = {"n": 0}
+        terminal = ui.xterm(
+            {"cursorBlink": True, "convertEol": False, "scrollback": 5000}
+        ).classes("w-full flex-grow").style("min-height: 250px;")
+        incoming: deque[str] = deque()
 
+        def on_serial(direction: str, text: str) -> None:
+            if direction == "rx":
+                incoming.append(text)
+
+        connection.subscribe(on_serial)
+        ui.context.client.on_disconnect(lambda: connection.unsubscribe(on_serial))
+        if connection.lines:
+            terminal.write("\r\n".join(connection.lines) + "\r\n")
+
+        def on_terminal_data(e) -> None:
+            try:
+                connection.send(e.data, raw=True)
+            except Exception as exc:  # noqa: BLE001
+                ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
+
+        terminal.on_data(on_terminal_data)
         with ui.row().classes("w-full justify-end shrink-0"):
 
             def clear_display() -> None:
-                log.clear()
+                terminal.run_terminal_method("clear")
                 connection.lines.clear()
-                last_rendered_count["n"] = 0
                 ui.notify("Anzeige geleert", type="info")
 
             ui.button("Anzeige leeren", on_click=clear_display, icon="delete_sweep").props(
                 "outline dense"
             )
 
-        key_map = {
-            "Enter": "\n",
-            "Tab": "\t",
-            "Backspace": "\x7f",
-            "Escape": "\x1b",
-            "ArrowUp": "\x1b[A",
-            "ArrowDown": "\x1b[B",
-            "ArrowRight": "\x1b[C",
-            "ArrowLeft": "\x1b[D",
-            "Delete": "\x1b[3~",
-            "Home": "\x1b[H",
-            "End": "\x1b[F",
-        }
-
-        def on_key(e) -> None:
-            args = e.args or {}
-            key = args.get("key", "")
-            if args.get("ctrlKey") and len(key) == 1 and key.isalpha():
-                payload = chr(ord(key.lower()) - 96)
-            elif key in key_map:
-                payload = key_map[key]
-            elif len(key) == 1 and not args.get("ctrlKey") and not args.get("metaKey"):
-                payload = key
-            else:
-                return
-            try:
-                connection.send(payload, raw=True)
-            except Exception as exc:  # noqa: BLE001
-                ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
-
-        log.props("tabindex=0")
-        log.on(
-            "keydown",
-            on_key,
-            args=["key", "ctrlKey", "metaKey"],
-            js_handler="""(e) => {
-                const k = e.key;
-                if (e.metaKey || (e.ctrlKey && k.length !== 1)) return;
-                if (k.length === 1 || ['Enter','Tab','Backspace','Escape','ArrowUp',
-                    'ArrowDown','ArrowLeft','ArrowRight','Delete','Home','End'].includes(k)) {
-                    e.preventDefault();
-                    emit({key: k, ctrlKey: e.ctrlKey, metaKey: e.metaKey});
-                }
-            }""",
-        )
-        ui.label("Zum Tippen in die Konsole klicken – Eingaben werden direkt gesendet.").classes(
+        ui.label("Zum Tippen in das Terminal klicken – Eingaben (inkl. Tab) werden direkt gesendet.").classes(
             "text-xs text-grey shrink-0"
         )
 
@@ -238,12 +193,16 @@ def build_port_card(device: str, baudrate: int):
             else:
                 status_badge.set_text("verbunden" if connection.is_open else "getrennt")
                 status_badge.props(f"color={'green' if connection.is_open else 'red'}")
-            new_lines = connection.lines[last_rendered_count["n"] :]
-            for line in new_lines:
-                log.push(line)
-            last_rendered_count["n"] = len(connection.lines)
+            if terminal.is_deleted:
+                connection.unsubscribe(on_serial)
+                return
+            chunks = []
+            while incoming:
+                chunks.append(incoming.popleft())
+            if chunks:
+                terminal.write(re.sub(r"(?<!\r)\n", "\r\n", "".join(chunks)))
 
-    return ui.timer(0.5, refresh)
+    return ui.timer(0.1, refresh)
 
 
 @ui.page("/")
@@ -265,6 +224,7 @@ def index() -> None:
                 "flat color=white round"
             )
             ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
+        nav("serial")
         with ui.row().classes("items-center"):
             _setup_dark_mode()
             ui.button(
@@ -1035,6 +995,9 @@ async def api_ws_alias(
         await websocket.close(code=1008)
         return
     await _api_ws_for_device(websocket, device, token)
+
+
+register_api(_check_api_token, _bearer)
 
 
 @app.on_shutdown
