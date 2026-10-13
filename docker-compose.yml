@@ -23,3 +23,5 @@ services:
     environment:
       - RPI_SEMIAUTOMATOR_CONFIG=/app/config/config.yaml
       - RPI_SEMIAUTOMATOR_FAVORITES=/app/data/favorites.yaml
+      - RPI_SEMIAUTOMATOR_CAN_PROFILES=/app/data/can_profiles.yaml
+      - RPI_SEMIAUTOMATOR_DBC_DIR=/app/data/dbc

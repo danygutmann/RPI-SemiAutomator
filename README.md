@@ -19,6 +19,7 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
   können über `/` mehrstufig verschachtelt und ein- oder ausgeklappt werden
 - Eigene **Einstellungen**-Seite zum Hinzufügen/Entfernen von Favoriten sowie zum Sichern (Backup) und Neuladen der gespeicherten Einstellungen
 - Läuft als Docker-Container, geeignet für den Raspberry Pi
+- CAN-Monitor und DBC-Message-Generator mit python-can und cantools
 
 ## Konfiguration
 
@@ -63,6 +64,40 @@ Dateien extern verändert oder aus einem Backup wiederhergestellt wurden).
 Beim Download enthält die Logdatei die aktuell im Speicher verfügbaren
 empfangenen Zeilen; der Button **Anzeige leeren** setzt die Anzeige und den
 Zwischenspeicher eines Ports zurück.
+
+## CAN
+
+Der CAN-Monitor ist als eigener Tab in dieselbe NiceGUI-Anwendung integriert.
+CAN-Profile werden in `data/can_profiles.yaml`, DBC-Dateien unter `data/dbc/`
+gespeichert; beide liegen damit im persistenten Datenverzeichnis. Die
+zugehörigen Pfade können über `RPI_SEMIAUTOMATOR_CAN_PROFILES` und
+`RPI_SEMIAUTOMATOR_DBC_DIR` überschrieben werden.
+
+Der CAN-Manager öffnet zentral höchstens eine Verbindung für alle Clients.
+Neue Profile starten mit `listen_only: true`; Senden ist zusätzlich
+anwendungsseitig gesperrt. Zum Senden muss ein Profil mit `listen_only: false`
+gespeichert und verbunden sowie die Sendefreigabe ausdrücklich aktiviert
+werden. Es gibt kein zyklisches Senden. Der DBC-Generator zeigt vor jeder
+Sendung eine Vorschau und lässt Werte außerhalb der Signalbereiche nicht zu.
+DBC-Dateien werden als Daten validiert und unter zufälligen Dateinamen
+gespeichert; Dateiinhalte werden nicht ausgeführt. DBC-Daten erzeugen nicht
+automatisch erforderliche CRCs, Alive-Counter oder Steuergeräte-Freigaben.
+
+python-can stellt die Backends `pcan`, `vector`, `kvaser`, `socketcan` und
+`virtual` bereit. Native PEAK-, Vector- und Kvaser-Backends benötigen die
+jeweiligen Linux-Treiber und Hersteller-SDKs (PEAK PCAN-Basic, Vector XL
+Driver Library bzw. Kvaser CANlib); diese werden nicht pauschal in das
+Standard-Container-Image installiert. Geräte-, SDK-, Kernel- und
+Architekturkompatibilität muss vor Hardwareeinsatz je Adapter geprüft werden.
+Für Vector und PCAN konfiguriert python-can bei `listen_only: true` den
+Treiber entsprechend. Bei SocketCAN und Kvaser wird die Sendefreigabe in der
+Anwendung gesperrt; ein echter Hardware-Listen-only-Modus (ohne ACK) muss, wo
+verfügbar, separat konfiguriert werden. SocketCAN-Interfaces und Bitraten
+werden auf dem Host eingerichtet. Die
+Compose-Datei setzt weder `privileged: true` noch pauschale CAN-Rechte; bei
+Bedarf müssen die minimal erforderlichen Geräte-/Netzwerkrechte gezielt
+konfiguriert werden. CAN FD erfordert FD-fähige Hardware und passende
+Treiberkonfiguration.
 
 ## Start mit Docker
 
@@ -136,6 +171,23 @@ Optional absicherbar mit `RPI_SEMIAUTOMATOR_API_TOKEN` (Bearer-Token im `Authori
   nicht gefundenes Makro ergibt HTTP 404.
 - `GET /api/backup` – lädt ein YAML-Backup mit Favoriten und Makros als
   `rpi-semiautomator-backup.yaml` herunter.
+- `GET/POST /api/can/profiles`, `PUT/DELETE /api/can/profiles/{id}` – CAN-Profile
+  verwalten; neue Profile verwenden standardmäßig `listen_only: true`.
+- `GET /api/can/status`, `POST /api/can/connect`,
+  `POST /api/can/disconnect` – zentralen CAN-Manager steuern.
+- `GET /api/can/frames?after=0&limit=200` und `WS /api/can/ws` – begrenzter
+  Empfangsstream mit Frame- und Verlustindikatoren. CAN-FD-Frames haben
+  `is_fd: true`.
+- `POST /api/can/transmit-mode` mit `{"enabled":true}` – explizite
+  Sendefreigabe; dafür muss das verbundene Profil `listen_only: false` setzen.
+- `POST /api/can/send` mit Arbitration-ID, Hex-Daten und optional
+  `is_extended_id`/`is_fd` – explizites Senden nach der Freigabe.
+- `GET /api/can/dbcs`, `POST /api/can/dbcs?filename=...` (roher DBC-Inhalt,
+  maximal 1 MiB) und `GET /api/can/dbcs/{id}/messages` – DBC-Dateien verwalten
+  und Nachrichten auflisten.
+- `POST /api/can/dbc/preview` und `POST /api/can/dbc/send` – DBC-Signalwerte
+  validieren/vorschauen beziehungsweise explizit senden; der Body enthält
+  `profile_id`, `message` und `signals`.
 
 Der Alias ist der **Name** des Ports aus `config/config.yaml` oder der Name
 eines unter Einstellungen gespeicherten Favoriten. Favoriten-Namen haben
