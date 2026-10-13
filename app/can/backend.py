@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import can
 
-from models import CANProfile
+from .models import CANProfile
 
 
 def open_bus(profile: CANProfile):

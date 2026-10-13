@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from models import CANProfile
-from profiles import load_dbc
+from .models import CANProfile
+from .profiles import load_dbc
 
 
 def message_preview(profile: CANProfile, message_name: str, signals: dict) -> dict:

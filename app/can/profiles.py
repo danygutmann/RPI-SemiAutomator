@@ -13,7 +13,7 @@ import yaml
 from cantools.database.errors import Error as DBCError
 from fastapi import HTTPException
 
-from models import CANProfile
+from .models import CANProfile
 
 SUPPORTED_INTERFACES = {"socketcan", "pcan", "vector", "kvaser", "virtual"}
 MAX_DBC_SIZE = 1024 * 1024

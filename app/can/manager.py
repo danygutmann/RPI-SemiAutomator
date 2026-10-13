@@ -10,8 +10,8 @@ from typing import Callable
 
 import can
 
-from backend import open_bus
-from models import CANFrame, CANProfile
+from .backend import open_bus
+from .models import CANFrame, CANProfile
 
 FRAME_BUFFER_SIZE = 2000
 
@@ -52,6 +52,11 @@ class CANManager:
                 transmit_enabled=self._transmit_enabled,
                 mode="transmit" if self._transmit_enabled else "listen-only",
             )
+
+    @property
+    def profile(self) -> CANProfile | None:
+        with self._lock:
+            return self._profile
 
     def frames(self, after: int = 0, limit: int = 200) -> tuple[list[dict], int, int]:
         with self._lock:
