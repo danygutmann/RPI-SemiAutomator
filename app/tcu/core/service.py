@@ -42,9 +42,12 @@ class TCUService:
             await self.events.publish(
                 TCUEvent.create("connection.status", {"status": status})
             )
-            self._ensure_signal_subscription()
+            await self._ensure_signal_subscription()
             return status
         except TCUError as exc:
+            await self.events.publish(
+                TCUEvent.create("connection.status", {"status": self.status()})
+            )
             await self.events.publish(
                 TCUEvent.create(
                     "tcu.error", {"code": exc.code, "message": str(exc)}
@@ -178,7 +181,7 @@ class TCUService:
             TCUEvent.create(event_type, payload, request_id=record.request_id)
         )
 
-    def _ensure_signal_subscription(self) -> None:
+    async def _ensure_signal_subscription(self) -> None:
         if self._unsubscribe_signals is not None:
             return
 
@@ -189,7 +192,7 @@ class TCUService:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
 
-        self._unsubscribe_signals = self.client.subscribe_signals(on_signal)
+        self._unsubscribe_signals = await self.client.subscribe_signals(on_signal)
 
     async def shutdown(self) -> None:
         tasks = tuple(self._tasks)

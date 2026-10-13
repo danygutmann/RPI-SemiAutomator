@@ -38,6 +38,7 @@ class DBusClient:
         self._introspection: dict[tuple[str, str], ET.Element] = {}
         self._signal_handlers: set[Callable[[dict[str, Any]], None]] = set()
         self._signal_match_installed = False
+        self._message_handler_added = False
 
     def status(self) -> dict[str, Any]:
         return {
@@ -80,15 +81,18 @@ class DBusClient:
         self._last_error = None
         self._introspection.clear()
         self._last_change = datetime.now(timezone.utc).isoformat()
-        self._install_signal_handler()
+        await self._install_signal_handler()
         return self.status()
 
     async def disconnect(self) -> dict[str, Any]:
         bus, self._bus = self._bus, None
         self._introspection.clear()
+        message_handler_added = self._message_handler_added
         self._signal_match_installed = False
+        self._message_handler_added = False
         if bus is not None:
-            bus.remove_message_handler(self._handle_message)
+            if message_handler_added:
+                bus.remove_message_handler(self._handle_message)
             bus.disconnect()
         self._last_change = datetime.now(timezone.utc).isoformat()
         return self.status()
@@ -171,20 +175,26 @@ class DBusClient:
         ]
         return result, result_signature
 
-    def subscribe_signals(
+    async def subscribe_signals(
         self, handler: Callable[[dict[str, Any]], None]
     ) -> Callable[[], None]:
         self._signal_handlers.add(handler)
-        self._install_signal_handler()
+        await self._install_signal_handler()
 
         def unsubscribe() -> None:
             self._signal_handlers.discard(handler)
 
         return unsubscribe
 
-    def _install_signal_handler(self) -> None:
-        if self._bus is not None and self._signal_handlers:
+    async def _install_signal_handler(self) -> None:
+        if self._bus is None or not self._signal_handlers:
+            return
+        if not self._message_handler_added:
             self._bus.add_message_handler(self._handle_message)
+            self._message_handler_added = True
+        if not self._signal_match_installed:
+            await self._daemon_call("AddMatch", "s", ["type='signal'"])
+            self._signal_match_installed = True
 
     def _handle_message(self, message: Message) -> bool:
         if message.message_type != MessageType.SIGNAL:
