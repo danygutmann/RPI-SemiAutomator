@@ -10,8 +10,6 @@ import asyncio
 import json
 import os
 import re
-from collections import deque
-from pathlib import Path
 from typing import Dict
 
 from fastapi import HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -32,24 +30,14 @@ from config import (
 )
 from panels import nav, register_api
 from serial_manager import SerialConnection, SerialManager
+from serial_panel import build_port_card
+from settings_page import build_settings_page
+from ui_common import setup_dark_mode
 
 config = load_config()
 favorites = load_favorites()
 user_macros = load_macros()
 manager = SerialManager()
-
-
-def _setup_dark_mode() -> None:
-    """Apply the persisted dark-mode choice and add a toggle to the header."""
-    dark = ui.dark_mode(bool(app.storage.user.get("dark", False)))
-
-    def toggle() -> None:
-        dark.toggle()
-        app.storage.user["dark"] = bool(dark.value)
-
-    ui.button(icon="dark_mode", on_click=toggle).props("flat color=white round").tooltip(
-        "Hell/Dunkel umschalten"
-    )
 
 
 def _known_devices() -> Dict[str, int]:
@@ -113,98 +101,6 @@ def _macros_for(alias: str) -> list[Macro]:
     return [macro for macro in user_macros if macro.alias == alias]
 
 
-def build_port_card(device: str, baudrate: int):
-    """Build the console card for one device. Does not open the connection."""
-    connection: SerialConnection = manager.get_or_create(device, baudrate)
-    if not connection.is_open:
-        connection.baudrate = baudrate
-
-    with ui.column().classes("w-full h-full gap-2"):
-        with ui.row().classes("items-center w-full justify-between shrink-0"):
-            ui.label(_device_options()[device]).classes("text-lg font-bold")
-            status_badge = ui.badge("getrennt", color="red")
-
-            def download_log() -> None:
-                filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(device).name) or "serial"
-                content = "\n".join(connection.lines).encode("utf-8")
-                ui.download(content, f"{filename}.log", media_type="text/plain; charset=utf-8")
-
-            ui.button("Log herunterladen", on_click=download_log, icon="download").props(
-                "outline"
-            )
-
-        with ui.row().classes("items-center w-full shrink-0"):
-            def do_connect() -> None:
-                try:
-                    connection.connect()
-                    ui.notify(f"{device} verbunden", type="positive")
-                except Exception as exc:  # noqa: BLE001 - surfaced to the user
-                    ui.notify(f"Verbindung fehlgeschlagen: {exc}", type="negative")
-
-            def do_disconnect() -> None:
-                connection.disconnect()
-                ui.notify(f"{device} getrennt", type="warning")
-
-            ui.button("Verbinden", on_click=do_connect, icon="power")
-            ui.button("Trennen", on_click=do_disconnect, icon="power_off").props(
-                "outline"
-            )
-
-        terminal = ui.xterm(
-            {"cursorBlink": True, "convertEol": False, "scrollback": 5000}
-        ).classes("w-full flex-grow").style("min-height: 250px;")
-        incoming: deque[str] = deque()
-
-        def on_serial(direction: str, text: str) -> None:
-            if direction == "rx":
-                incoming.append(text)
-
-        connection.subscribe(on_serial)
-        ui.context.client.on_disconnect(lambda: connection.unsubscribe(on_serial))
-        if connection.lines:
-            terminal.write("\r\n".join(connection.lines) + "\r\n")
-
-        def on_terminal_data(e) -> None:
-            try:
-                connection.send(e.data, raw=True)
-            except Exception as exc:  # noqa: BLE001
-                ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
-
-        terminal.on_data(on_terminal_data)
-        with ui.row().classes("w-full justify-end shrink-0"):
-
-            def clear_display() -> None:
-                terminal.run_terminal_method("clear")
-                connection.lines.clear()
-                ui.notify("Anzeige geleert", type="info")
-
-            ui.button("Anzeige leeren", on_click=clear_display, icon="delete_sweep").props(
-                "outline dense"
-            )
-
-        ui.label("Zum Tippen in das Terminal klicken – Eingaben (inkl. Tab) werden direkt gesendet.").classes(
-            "text-xs text-grey shrink-0"
-        )
-
-        def refresh() -> None:
-            if connection.error:
-                status_badge.set_text("Fehler")
-                status_badge.props("color=orange")
-            else:
-                status_badge.set_text("verbunden" if connection.is_open else "getrennt")
-                status_badge.props(f"color={'green' if connection.is_open else 'red'}")
-            if terminal.is_deleted:
-                connection.unsubscribe(on_serial)
-                return
-            chunks = []
-            while incoming:
-                chunks.append(incoming.popleft())
-            if chunks:
-                terminal.write(re.sub(r"(?<!\r)\n", "\r\n", "".join(chunks)))
-
-    return ui.timer(0.1, refresh)
-
-
 @ui.page("/")
 def index() -> None:
     ui.add_head_html(
@@ -226,7 +122,7 @@ def index() -> None:
             ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
         nav("serial")
         with ui.row().classes("items-center"):
-            _setup_dark_mode()
+            setup_dark_mode()
             ui.button(
                 "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
             ).props("flat color=white")
@@ -379,7 +275,12 @@ def index() -> None:
             with panel_container:
                 with ui.column().classes("w-full h-full"):
                     baudrate = _known_devices().get(device, 115200)
-                    page_state["active_timer"] = build_port_card(device, baudrate)
+                    page_state["active_timer"] = build_port_card(
+                        device,
+                        baudrate,
+                        manager.get_or_create(device, baudrate),
+                        _device_options()[device],
+                    )
 
         def render_terminals(devices: list[str], active_device: str | None = None) -> None:
             if page_state["active_timer"] is not None:
@@ -422,264 +323,15 @@ def index() -> None:
 
 @ui.page("/settings")
 def settings_page() -> None:
-    ui.add_head_html(
-        "<style>html, body, #app, .nicegui-content { height: 100%; }</style>"
+    build_settings_page(
+        setup_dark_mode,
+        favorites,
+        user_macros,
+        _device_options,
+        _preset_name,
+        _device_aliases,
+        _api_device_for_alias,
     )
-
-    with ui.header().classes("items-center justify-between").props("bordered"):
-        with ui.row().classes("items-center"):
-            ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
-                "flat color=white round"
-            )
-            ui.label("Einstellungen").classes("text-lg font-semibold")
-        _setup_dark_mode()
-
-    with ui.column().classes("w-full max-w-2xl mx-auto gap-4 p-4"):
-        ui.label("Favorit hinzufügen").classes("text-lg font-bold")
-        with ui.row().classes("w-full items-end gap-2"):
-            device_select = ui.select(
-                options=_device_options(), label="Schnittstelle", with_input=True
-            ).classes("flex-grow")
-            new_name_input = ui.input(label="Name").classes("w-40")
-            new_baud_input = ui.number(
-                label="Baudrate", value=115200, min=110, max=4000000
-            ).classes("w-32")
-
-        favorites_list_container = ui.column().classes("w-full gap-1")
-
-        def render_favorites_list() -> None:
-            device_select.options = _device_options()
-            device_select.update()
-            favorites_list_container.clear()
-            if not favorites:
-                with favorites_list_container:
-                    ui.label("Keine Favoriten.").classes("text-sm text-grey-6")
-                return
-            with favorites_list_container:
-                for favorite in list(favorites):
-                    with ui.row().classes("items-center w-full justify-between"):
-                        ui.label(
-                            f"{favorite.name} — {favorite.device} "
-                            f"({favorite.baudrate} Baud)"
-                        ).classes("text-sm")
-
-                        def make_edit(fav: PortPreset = favorite):
-                            def _edit() -> None:
-                                with ui.dialog() as dialog, ui.card():
-                                    ui.label("Favorit bearbeiten").classes("text-lg font-bold")
-                                    name_input = ui.input(label="Name", value=fav.name).classes("w-64")
-                                    baud_input = ui.number(
-                                        label="Baudrate", value=fav.baudrate, min=110, max=4000000
-                                    ).classes("w-64")
-
-                                    def save() -> None:
-                                        name = (name_input.value or "").strip() or fav.device
-                                        save_favorite(
-                                            PortPreset(
-                                                name=name,
-                                                device=fav.device,
-                                                baudrate=int(baud_input.value or fav.baudrate),
-                                            )
-                                        )
-                                        favorites.clear()
-                                        favorites.extend(load_favorites())
-                                        dialog.close()
-                                        render_favorites_list()
-                                        ui.notify(f"'{name}' gespeichert", type="positive")
-
-                                    with ui.row().classes("justify-end w-full gap-2"):
-                                        ui.button("Abbrechen", on_click=dialog.close).props("flat")
-                                        ui.button("Speichern", on_click=save, icon="save")
-                                dialog.open()
-
-                            return _edit
-
-                        def make_remove(dev: str = favorite.device):
-                            def _remove() -> None:
-                                remove_favorite(dev)
-                                favorites.clear()
-                                favorites.extend(load_favorites())
-                                render_favorites_list()
-                                ui.notify(f"{dev} aus Favoriten entfernt", type="info")
-
-                            return _remove
-
-                        with ui.row().classes("gap-0"):
-                            ui.button(icon="edit", on_click=make_edit()).props(
-                                "flat dense round"
-                            )
-                            ui.button(icon="delete", on_click=make_remove()).props(
-                                "flat dense round"
-                            )
-
-        def add_favorite() -> None:
-            device = device_select.value
-            if not device:
-                ui.notify("Bitte eine Schnittstelle auswählen", type="warning")
-                return
-            try:
-                name = (new_name_input.value or _preset_name(device)).strip() or device
-                favorite = PortPreset(
-                    name=name,
-                    device=device,
-                    baudrate=int(new_baud_input.value or 115200),
-                )
-                save_favorite(favorite)
-                favorites.clear()
-                favorites.extend(load_favorites())
-                device_select.value = None
-                new_name_input.value = ""
-                new_baud_input.value = 115200
-                render_favorites_list()
-                ui.notify(f"'{name}' als Favorit gespeichert", type="positive")
-            except Exception as exc:  # noqa: BLE001
-                ui.notify(
-                    f"Favorit konnte nicht gespeichert werden: {exc}", type="negative"
-                )
-
-        ui.button("Favorit hinzufügen", on_click=add_favorite, icon="star").props("outline")
-
-        ui.separator()
-        ui.label("Gespeicherte Favoriten").classes("text-lg font-bold")
-        render_favorites_list()
-
-        ui.separator()
-        ui.label("Makrotasten").classes("text-lg font-bold")
-        macros_list_container = ui.column().classes("w-full gap-1")
-
-        def render_macros_list() -> None:
-            macros_list_container.clear()
-            with macros_list_container:
-                if not user_macros:
-                    ui.label("Keine Makros.").classes("text-sm text-grey-6")
-                    return
-                for macro in list(user_macros):
-                    scope = macro.alias or "Alias nicht zugeordnet"
-                    with ui.row().classes("items-center w-full justify-between"):
-                        ui.label(f"{macro.label} — {macro.command} ({scope})").classes(
-                            "text-sm"
-                        )
-
-                        def make_edit_macro(m: Macro = macro):
-                            def _edit() -> None:
-                                with ui.dialog() as dialog, ui.card():
-                                    ui.label("Makro bearbeiten").classes("text-lg font-bold")
-                                    name_input = ui.input(label="Name", value=m.label).classes("w-64")
-                                    command_input = ui.input(
-                                        label="Kommando", value=m.command
-                                    ).classes("w-64")
-                                    category_input = ui.input(
-                                        label="Ordner (mit / verschachteln)",
-                                        value=m.category or "",
-                                    ).classes("w-64")
-                                    alias_options = {
-                                        alias: alias for alias in _device_aliases().values()
-                                    }
-                                    if m.alias and m.alias not in alias_options:
-                                        alias_options[m.alias] = m.alias
-                                    alias_select = ui.select(
-                                        options=alias_options,
-                                        label="Alias",
-                                        value=m.alias,
-                                    ).classes("w-64")
-
-                                    def save() -> None:
-                                        name = (name_input.value or "").strip()
-                                        command = (command_input.value or "").strip()
-                                        if not name or not command:
-                                            ui.notify(
-                                                "Name und Kommando sind erforderlich",
-                                                type="warning",
-                                            )
-                                            return
-                                        alias = alias_select.value
-                                        if not alias:
-                                            ui.notify("Ein Alias ist erforderlich", type="warning")
-                                            return
-                                        try:
-                                            _api_device_for_alias(alias)
-                                        except HTTPException:
-                                            ui.notify("Der Alias ist nicht eindeutig", type="warning")
-                                            return
-                                        update_macro(
-                                            m.label,
-                                            m.alias,
-                                            Macro(
-                                                label=name,
-                                                command=command,
-                                                raw=m.raw,
-                                                alias=alias,
-                                                category="/".join(
-                                                    part.strip()
-                                                    for part in (category_input.value or "").split("/")
-                                                    if part.strip()
-                                                )
-                                                or None,
-                                            ),
-                                        )
-                                        user_macros.clear()
-                                        user_macros.extend(load_macros())
-                                        dialog.close()
-                                        render_macros_list()
-                                        ui.notify(f"Makro '{name}' gespeichert", type="positive")
-
-                                    with ui.row().classes("justify-end w-full gap-2"):
-                                        ui.button("Abbrechen", on_click=dialog.close).props("flat")
-                                        ui.button("Speichern", on_click=save, icon="save")
-                                dialog.open()
-
-                            return _edit
-
-                        def make_delete_macro(m: Macro = macro):
-                            def _delete() -> None:
-                                remove_macro(m.label, m.alias)
-                                user_macros.clear()
-                                user_macros.extend(load_macros())
-                                render_macros_list()
-                                ui.notify(f"Makro '{m.label}' gelöscht", type="info")
-
-                            return _delete
-
-                        with ui.row().classes("gap-0"):
-                            ui.button(icon="edit", on_click=make_edit_macro()).props(
-                                "flat dense round"
-                            )
-                            ui.button(icon="delete", on_click=make_delete_macro()).props(
-                                "flat dense round"
-                            )
-
-        render_macros_list()
-
-        ui.separator()
-        ui.label("Daten").classes("text-lg font-bold")
-        ui.label(
-            "Favoriten und individuelle Makros sichern oder nach einer "
-            "externen Änderung neu laden."
-        ).classes("text-sm text-grey-6")
-
-        def backup() -> None:
-            content = backup_settings()
-            ui.download(
-                content, "rpi-semiautomator-backup.yaml", media_type="application/x-yaml"
-            )
-            ui.notify("Backup wurde heruntergeladen", type="positive")
-
-        def reload_settings() -> None:
-            favorites.clear()
-            favorites.extend(load_favorites())
-            user_macros.clear()
-            user_macros.extend(load_macros())
-            render_favorites_list()
-            render_macros_list()
-            ui.notify("Einstellungen wurden neu geladen", type="positive")
-
-        with ui.row().classes("gap-2"):
-            ui.button("Backup herunterladen", on_click=backup, icon="download").props(
-                "outline"
-            )
-            ui.button(
-                "Einstellungen neu laden", on_click=reload_settings, icon="refresh"
-            ).props("outline")
 
 
 def _check_api_token(token: str | None) -> None:
