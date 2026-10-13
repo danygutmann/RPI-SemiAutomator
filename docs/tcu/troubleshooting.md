@@ -3,22 +3,21 @@
 ## TCU is unreachable or connection says transport is not configured
 
 The feature is disabled by default. Set `TCU_ENABLED=true` and configure
-`TCU_DBUS_ADDRESS` as a local Unix socket or loopback bus address. The
+`TCU_DBUS_ADDRESS` as a local Unix socket. The
 repository does not identify the actual TCU IP, bus name, or supported remote
 access path. Verify these with the TCU/system owner; no target is guessed.
 
 For Docker, verify the socket is under the mounted `./data` tree and inspect it
 from the application container. Check path spelling and process permissions.
-For loopback TCP, the SSH tunnel or proxy must be running in the same network
-namespace as the application and listen only on loopback. This application does
-not start that tunnel.
+The SSH tunnel or proxy must provide a local Unix socket visible to the
+application. This application does not start that tunnel.
 
 ## SSH or proxy is unavailable
 
 Check the separately managed tunnel/proxy process, destination access, SSH
-host-key/authentication configuration, and tunnel listener. A tunnel-provided
-Unix socket can be mounted in `./data/tcu-dbus`. Do not enable remote,
-unauthenticated D-Bus TCP as a workaround.
+host-key/authentication configuration, and socket. A tunnel-provided Unix
+socket can be mounted in `./data/tcu-dbus`. Do not enable D-Bus TCP as a
+workaround.
 
 ## Missing D-Bus permissions
 

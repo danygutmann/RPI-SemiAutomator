@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
-from dbus_next import Variant
+from dbus_next import Message, MessageType, Variant
 from dbus_next.signature import SignatureTree
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,7 +17,13 @@ from tcu.api.routes import register_api
 from tcu.core.config import TCUConfig, load_config
 from tcu.core.models import dbus_value_to_json, json_to_dbus_value
 from tcu.core.service import TCUService
-from tcu.dbus.exceptions import InvalidDBusArguments, TCUNotConnected
+from tcu.dbus.client import DBusClient
+from tcu.dbus.exceptions import (
+    InvalidDBusArguments,
+    TCUQueueFull,
+    TCUNotConnected,
+    TransportNotConfigured,
+)
 from tcu.events.dispatcher import EventDispatcher
 from tcu.events.models import TCUEvent
 
@@ -90,16 +96,146 @@ def make_service(client=None, *, queue_size=100):
     return TCUService(config, client or FakeDBusClient(), events), events
 
 
-def test_config_defaults_disabled_and_rejects_non_loopback_transport(monkeypatch):
+def test_config_defaults_disabled_and_rejects_tcp_transport(monkeypatch):
     monkeypatch.delenv("TCU_ENABLED", raising=False)
     monkeypatch.delenv("TCU_DBUS_ADDRESS", raising=False)
     monkeypatch.delenv("TCU_OBJECT_PATHS", raising=False)
     monkeypatch.delenv("TCU_TIMEOUT_SECONDS", raising=False)
     assert load_config().enabled is False
     monkeypatch.setenv("TCU_ENABLED", "true")
-    monkeypatch.setenv("TCU_DBUS_ADDRESS", "tcp:host=192.0.2.10,port=5555")
-    with pytest.raises(ValueError, match="loopback"):
+    monkeypatch.setenv("TCU_DBUS_ADDRESS", "tcp:host=127.0.0.1,port=5555")
+    with pytest.raises(ValueError, match="Unix socket"):
         load_config()
+
+
+def test_dbus_client_introspects_validates_calls_and_restarts_signal_registration(
+    monkeypatch,
+):
+    import tcu.dbus.client as dbus_client_module
+
+    xml = """<node>
+      <interface name="org.example.Test">
+        <method name="GetStatus"><arg type="s" direction="out"/></method>
+        <method name="SetMode"><arg type="s" direction="in"/></method>
+      </interface>
+    </node>"""
+
+    class Bus:
+        def __init__(self):
+            self.handlers = []
+            self.calls = []
+            self.added = 0
+            self.removed = 0
+
+        async def connect(self):
+            return self
+
+        def disconnect(self):
+            pass
+
+        async def wait_for_disconnect(self):
+            await asyncio.Future()
+
+        def add_message_handler(self, handler):
+            self.handlers.append(handler)
+            self.added += 1
+
+        def remove_message_handler(self, handler):
+            self.handlers.remove(handler)
+            self.removed += 1
+
+        async def call(self, message):
+            self.calls.append(message)
+            if message.member == "Introspect":
+                return Message(
+                    message_type=MessageType.METHOD_RETURN,
+                    reply_serial=1,
+                    signature="s",
+                    body=[xml],
+                )
+            if message.member == "GetStatus":
+                return Message(
+                    message_type=MessageType.METHOD_RETURN,
+                    reply_serial=1,
+                    signature="s",
+                    body=["ready"],
+                )
+            return Message(
+                message_type=MessageType.METHOD_RETURN, reply_serial=1
+            )
+
+    buses = []
+
+    def bus_factory(bus_address):
+        bus = Bus()
+        buses.append(bus)
+        return bus
+
+    monkeypatch.setattr(dbus_client_module, "MessageBus", bus_factory)
+    config = TCUConfig(
+        enabled=True,
+        bus_address="unix:path=/run/tcu.sock",
+        timeout_seconds=1,
+        known_object_paths=("/",),
+    )
+
+    async def scenario():
+        client = DBusClient(config)
+        service = TCUService(config, client)
+        events = service.events.subscribe()
+        await service.connect()
+        assert (await events.get()).event_type == "connection.status"
+        assert await client.call_method(
+            "org.example.Test", "/", "org.example.Test", "GetStatus", []
+        ) == (["ready"], "s")
+        with pytest.raises(InvalidDBusArguments):
+            await client.call_method(
+                "org.example.Test", "/", "org.example.Test", "SetMode", [True]
+            )
+        assert not any(message.member == "SetMode" for message in buses[0].calls)
+
+        signal = Message(
+            message_type=MessageType.SIGNAL,
+            path="/",
+            interface="org.example.Test",
+            member="Changed",
+            signature="oay",
+            body=["/child", b"\x01"],
+            sender="org.example.Test",
+        )
+        client._handle_message(signal)
+        signal_event = await asyncio.wait_for(events.get(), 1)
+        assert signal_event.event_type == "dbus.signal"
+        assert signal_event.payload["member"] == "Changed"
+        assert signal_event.payload["arguments"] == [
+            {"$type": "object_path", "value": "/child"},
+            {"$type": "bytes", "base64": "AQ=="},
+        ]
+        assert buses[0].added == 1
+        await service.disconnect()
+        assert buses[0].removed == 1
+
+        await service.connect()
+        assert buses[1].added == 1
+        assert sum(message.member == "AddMatch" for message in buses[1].calls) == 1
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_dbus_client_reports_disabled_transport_without_connecting():
+    config = TCUConfig(
+        enabled=False,
+        bus_address=None,
+        timeout_seconds=1,
+        known_object_paths=("/",),
+    )
+
+    async def scenario():
+        with pytest.raises(TransportNotConfigured, match="disabled"):
+            await DBusClient(config).connect()
+
+    asyncio.run(scenario())
 
 
 def test_dbus_typed_json_conversion_for_byte_arrays_structs_and_variants():
@@ -155,6 +291,11 @@ def test_event_dispatcher_bounds_slow_client_queues_and_cleans_subscribers():
         assert [event.payload["index"] for event in dispatcher.history()] == [1, 2]
         dispatcher.unsubscribe(slow)
         assert dispatcher.client_count == 0
+        capped = EventDispatcher(max_clients=1)
+        first = capped.subscribe()
+        with pytest.raises(RuntimeError, match="limit"):
+            capped.subscribe()
+        capped.unsubscribe(first)
 
     asyncio.run(scenario())
 
@@ -192,6 +333,20 @@ def test_service_timeout_is_reported_as_failed_result():
     asyncio.run(scenario())
 
 
+def test_service_rejects_calls_when_bounded_queue_is_full():
+    async def scenario():
+        service, _ = make_service(FakeDBusClient(delay=1))
+        for _ in range(64):
+            service.submit_call(
+                "org.example.Test", "/", "org.example.Test", "Get", [], 2
+            )
+        with pytest.raises(TCUQueueFull):
+            service.submit_call("org.example.Test", "/", "org.example.Test", "Get", [])
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_tcu_api_call_validation_status_result_events_and_openapi():
     service, _ = make_service()
     app = FastAPI()
@@ -200,9 +355,28 @@ def test_tcu_api_call_validation_status_result_events_and_openapi():
         assert client.get("/api/v1/tcu/status").json()["connected"] is True
         assert client.get("/api/v1/tcu/services").json() == ["org.example.Test"]
         assert client.get("/api/v1/tcu/introspect").status_code == 422
+        missing_query = client.get("/api/v1/tcu/introspect")
+        assert missing_query.json()["error"]["code"] == "invalid_request"
+        introspection = client.get(
+            "/api/v1/tcu/introspect",
+            params={"service": "org.example.Test", "object_path": "/"},
+        )
+        assert introspection.status_code == 200
+        assert "<interface" in introspection.json()["xml"]
         invalid = client.post("/api/v1/tcu/calls", json={"service": "missing"})
         assert invalid.status_code == 400
         assert invalid.json()["error"]["code"] == "invalid_request"
+        invalid_name = client.post(
+            "/api/v1/tcu/calls",
+            json={
+                "service": "bad",
+                "object_path": "/",
+                "interface": "org.example.Test",
+                "method": "Get",
+                "arguments": [],
+            },
+        )
+        assert invalid_name.status_code == 400
 
         accepted = client.post(
             "/api/v1/tcu/calls",
@@ -258,6 +432,7 @@ def test_tcu_api_websocket_receives_connection_and_method_events():
             while "method.completed" not in event_types:
                 event_types.append(websocket.receive_json()["event_type"])
             assert event_types == ["method.started", "method.completed"]
+        assert service.events.client_count == 0
 
 
 def test_tcu_api_reports_unavailable_dbus_as_service_unavailable():

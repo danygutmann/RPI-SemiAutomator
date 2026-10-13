@@ -11,6 +11,7 @@ from typing import Any
 from dbus_next import Message, MessageType
 from dbus_next.aio import MessageBus
 from dbus_next.signature import SignatureTree
+from dbus_next.validators import is_bus_name_valid, is_object_path_valid
 
 from ..core.config import TCUConfig
 from ..core.models import dbus_value_to_json, json_to_dbus_value
@@ -41,6 +42,7 @@ class DBusClient:
         self._signal_match_installed = False
         self._message_handler_added = False
         self._monitor_task: asyncio.Task | None = None
+        self._lifecycle_lock = asyncio.Lock()
 
     def status(self) -> dict[str, Any]:
         return {
@@ -52,6 +54,10 @@ class DBusClient:
         }
 
     async def connect(self) -> dict[str, Any]:
+        async with self._lifecycle_lock:
+            return await self._connect_unlocked()
+
+    async def _connect_unlocked(self) -> dict[str, Any]:
         if self._bus is not None:
             return self.status()
         if not self.config.enabled:
@@ -60,26 +66,25 @@ class DBusClient:
         if not address:
             raise TransportNotConfigured(
                 "No D-Bus tunnel is configured; set TCU_DBUS_ADDRESS to a local Unix "
-                "socket or loopback SSH-forwarded address"
+                "socket provided by a separately secured proxy"
             )
-        if address.startswith("tcp:"):
-            fields = dict(
-                part.split("=", 1)
-                for part in address.removeprefix("tcp:").split(",")
-                if "=" in part
+        if not address.startswith("unix:path="):
+            raise TransportNotConfigured(
+                "Only a local Unix socket from a separately secured proxy is supported"
             )
-            if fields.get("host") not in {"127.0.0.1", "::1", "localhost"}:
-                raise TransportNotConfigured(
-                    "Unprotected non-loopback D-Bus TCP is disabled"
-                )
-        bus = MessageBus(bus_address=address)
+        bus = None
         try:
+            bus = MessageBus(bus_address=address)
             await asyncio.wait_for(bus.connect(), self.config.timeout_seconds)
         except asyncio.TimeoutError as exc:
+            if bus is not None:
+                bus.disconnect()
             self._last_error = "Timed out connecting to the configured D-Bus transport"
             self._last_change = datetime.now(timezone.utc).isoformat()
             raise TCUTimeout(self._last_error) from exc
         except Exception as exc:
+            if bus is not None:
+                bus.disconnect()
             self._last_error = str(exc)[:500]
             self._last_change = datetime.now(timezone.utc).isoformat()
             raise TransportNotConfigured(
@@ -94,6 +99,10 @@ class DBusClient:
         return self.status()
 
     async def disconnect(self) -> dict[str, Any]:
+        async with self._lifecycle_lock:
+            return await self._disconnect_unlocked()
+
+    async def _disconnect_unlocked(self) -> dict[str, Any]:
         bus, self._bus = self._bus, None
         self._introspection.clear()
         message_handler_added = self._message_handler_added
@@ -194,7 +203,15 @@ class DBusClient:
         self, handler: Callable[[dict[str, Any]], None]
     ) -> Callable[[], None]:
         self._signal_handlers.add(handler)
-        await self._install_signal_handler()
+        try:
+            await self._install_signal_handler()
+        except Exception:
+            self._signal_handlers.discard(handler)
+            bus = self._bus
+            if bus is not None and self._message_handler_added:
+                bus.remove_message_handler(self._handle_message)
+                self._message_handler_added = False
+            raise
 
         def unsubscribe() -> None:
             self._signal_handlers.discard(handler)
@@ -216,6 +233,8 @@ class DBusClient:
             await bus.wait_for_disconnect()
         except asyncio.CancelledError:
             return
+        except Exception:
+            pass
         if self._bus is not bus:
             return
         self._bus = None
@@ -266,6 +285,10 @@ class DBusClient:
     async def _get_introspection(
         self, service: str, object_path: str, timeout_seconds: float | None = None
     ) -> ET.Element:
+        if not is_bus_name_valid(service):
+            raise InvalidDBusArguments("service is not a valid D-Bus bus name")
+        if not is_object_path_valid(object_path):
+            raise InvalidDBusArguments("object_path is not a valid D-Bus object path")
         self._require_bus()
         key = (service, object_path)
         if key in self._introspection:

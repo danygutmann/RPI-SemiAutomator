@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from dbus_next import Variant
-from dbus_next.signature import SignatureType
+from dbus_next.signature import SignatureTree, SignatureType
 
 
 def utc_now() -> str:
@@ -72,9 +73,10 @@ def json_to_dbus_value(value: Any, signature: SignatureType) -> Any:
         nested_signature = value.get("signature")
         if not isinstance(nested_signature, str):
             raise ValueError("Variant arguments require a D-Bus signature")
-        from dbus_next.signature import SignatureTree
-
-        tree = SignatureTree._get(nested_signature)
+        try:
+            tree = SignatureTree._get(nested_signature)
+        except Exception as exc:
+            raise ValueError("Variant signature is invalid") from exc
         if len(tree.types) != 1:
             raise ValueError("A variant signature must describe exactly one value")
         nested_type = tree.types[0]
@@ -86,6 +88,10 @@ def json_to_dbus_value(value: Any, signature: SignatureType) -> Any:
         value = value.get("value")
         if not isinstance(value, str):
             raise ValueError("Object path value must be a string")
+        from dbus_next.validators import is_object_path_valid
+
+        if not is_object_path_valid(value):
+            raise ValueError("Object path is invalid")
         return value
     if token == "g":
         if not isinstance(value, dict) or value.get("$type") != "signature":
@@ -93,6 +99,10 @@ def json_to_dbus_value(value: Any, signature: SignatureType) -> Any:
         value = value.get("value")
         if not isinstance(value, str):
             raise ValueError("Signature value must be a string")
+        try:
+            SignatureTree._get(value)
+        except Exception as exc:
+            raise ValueError("D-Bus signature is invalid") from exc
         return value
     if token == "a":
         child = signature.children[0]
@@ -148,14 +158,35 @@ def json_to_dbus_value(value: Any, signature: SignatureType) -> Any:
     if token in {"y", "n", "q", "i", "u", "x", "t", "h"}:
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"D-Bus '{token}' arguments require a JSON integer")
+        bounds = {
+            "y": (0, 2**8 - 1),
+            "n": (-(2**15), 2**15 - 1),
+            "q": (0, 2**16 - 1),
+            "i": (-(2**31), 2**31 - 1),
+            "u": (0, 2**32 - 1),
+            "x": (-(2**63), 2**63 - 1),
+            "t": (0, 2**64 - 1),
+            "h": (-(2**31), 2**31 - 1),
+        }
+        minimum, maximum = bounds[token]
+        if not minimum <= value <= maximum:
+            raise ValueError(f"D-Bus '{token}' integer is out of range")
         return value
     if token == "d":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("D-Bus double arguments require a JSON number")
-        return float(value)
+        try:
+            number = float(value)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError("D-Bus double argument is out of range") from exc
+        if not math.isfinite(number):
+            raise ValueError("D-Bus double arguments must be finite")
+        return number
     if token in {"s"}:
         if not isinstance(value, str):
             raise ValueError("D-Bus string arguments require a JSON string")
+        if "\x00" in value:
+            raise ValueError("D-Bus strings cannot contain NUL")
         return value
     raise ValueError(f"Unsupported D-Bus argument type: {token}")
 

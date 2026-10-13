@@ -9,8 +9,11 @@ from .models import TCUEvent
 
 
 class EventDispatcher:
-    def __init__(self, queue_size: int = 100, history_size: int = 1000) -> None:
+    def __init__(
+        self, queue_size: int = 100, history_size: int = 1000, max_clients: int = 100
+    ) -> None:
         self._queue_size = queue_size
+        self._max_clients = max_clients
         self._history: deque[TCUEvent] = deque(maxlen=history_size)
         self._clients: set[asyncio.Queue[TCUEvent]] = set()
         self._dropped: dict[asyncio.Queue[TCUEvent], int] = {}
@@ -20,6 +23,8 @@ class EventDispatcher:
         return len(self._clients)
 
     def subscribe(self) -> asyncio.Queue[TCUEvent]:
+        if len(self._clients) >= self._max_clients:
+            raise RuntimeError("TCU WebSocket client limit reached")
         queue: asyncio.Queue[TCUEvent] = asyncio.Queue(maxsize=self._queue_size)
         self._clients.add(queue)
         self._dropped[queue] = 0

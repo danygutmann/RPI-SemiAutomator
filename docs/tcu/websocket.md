@@ -2,7 +2,8 @@
 
 Connect to `ws://<host>:8080/api/v1/tcu/ws` (or `wss://` behind a TLS-enabled
 reverse proxy). The socket is server-to-client event transport; initiate
-actions through REST. Client text is ignored. Authentication follows the
+actions through REST. Client data frames are not accepted and close the
+connection. Authentication follows the
 existing optional `RPI_SEMIAUTOMATOR_API_TOKEN` policy: use an Authorization
 header with the `Bearer` scheme and configured token where the WebSocket client supports it,
 otherwise `?token=...`. Query tokens
@@ -63,7 +64,8 @@ in `api.md`.
 
 ## Delivery and failures
 
-Each connected client has an independent queue capped at 100 events. Slow
+At most 100 clients can be connected. Each has an independent queue capped at
+100 events. Slow
 clients do not block method execution or other subscribers; the oldest queued
 event is discarded when that client's queue is full. On disconnect, its queue
 and subscription are released. Failed sockets do not cancel backend calls.

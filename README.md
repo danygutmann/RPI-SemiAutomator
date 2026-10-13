@@ -106,9 +106,9 @@ Treiberkonfiguration.
 Der TCU-Tab `/tcu` und die versionierte Schnittstelle `/api/v1/tcu` verwenden
 einen gemeinsamen Backend-Service. TCU-Unterstützung ist standardmäßig
 deaktiviert. Die Ziel-TCU und deren Remote-D-Bus-Zugangsweg sind in diesem
-Repository nicht festgelegt; vor dem Aktivieren muss ein geschützter lokaler
-Socket, SSH-Tunnel oder Proxy separat eingerichtet werden. Direkter
-ungeschützter D-Bus-TCP-Zugriff wird nicht unterstützt.
+Repository nicht festgelegt; vor dem Aktivieren muss ein geschützter
+Remote-Zugangsweg mit lokalem Unix-Socket separat eingerichtet werden.
+D-Bus-TCP wird nicht unterstützt.
 
 Konfiguration und Voraussetzungen: [TCU-Konfiguration](docs/tcu/configuration.md).
 Architektur und offene Transportvoraussetzung:

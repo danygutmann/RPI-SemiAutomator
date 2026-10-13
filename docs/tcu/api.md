@@ -77,12 +77,16 @@ single-value signature.
 
 * `400`: invalid request or argument type.
 * `401`: API token required/invalid.
+* `422`: required query parameters missing or malformed.
 * `404`: unknown/expired request ID or introspected service, object, interface,
   or method.
 * `413`: call request body exceeds 256 KiB.
+* `429`: the bounded queue already contains 64 accepted/running calls.
 * `502`: remote D-Bus method error.
 * `503`: disabled, unconfigured, disconnected, or unreachable D-Bus transport.
 * `504`: connection or method timeout.
+* `500`: unexpected HTTP/API failure; an internal background-call failure appears
+  in the call result as `internal_error`.
 
 Method execution errors occur after an accepted `202`; poll the request or
 consume the event WebSocket. A local timeout is not proof the TCU did not

@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dbus_next.validators import is_object_path_valid
+
 
 def _positive_float(name: str, default: float, maximum: float) -> float:
     raw = os.environ.get(name)
@@ -32,7 +34,7 @@ class TCUConfig:
             return "not configured"
         if self.bus_address.startswith("unix:"):
             return "local D-Bus Unix socket"
-        return "loopback D-Bus tunnel"
+        return "unsupported D-Bus transport"
 
 
 def load_config() -> TCUConfig:
@@ -49,33 +51,17 @@ def load_config() -> TCUConfig:
             if path.strip()
         )
     )
-    if any(not path.startswith("/") or "\x00" in path for path in paths):
-        raise ValueError("TCU_OBJECT_PATHS must contain absolute D-Bus object paths")
+    if any(not is_object_path_valid(path) for path in paths):
+        raise ValueError("TCU_OBJECT_PATHS must contain valid D-Bus object paths")
     if address is not None:
         if address.startswith("unix:path="):
             socket_path = address.removeprefix("unix:path=")
-            if not socket_path or "\x00" in socket_path:
-                raise ValueError("TCU_DBUS_ADDRESS has an invalid Unix socket path")
-        elif address.startswith("tcp:"):
-            parts = dict(
-                part.split("=", 1)
-                for part in address.removeprefix("tcp:").split(",")
-                if "=" in part
-            )
-            host = parts.get("host", "")
-            if host not in {"127.0.0.1", "::1", "localhost"} or "port" not in parts:
-                raise ValueError(
-                    "TCP D-Bus addresses must target loopback; use an SSH tunnel"
-                )
-            try:
-                port = int(parts["port"])
-            except ValueError as exc:
-                raise ValueError("TCU_DBUS_ADDRESS has an invalid port") from exc
-            if not 1 <= port <= 65535:
-                raise ValueError("TCU_DBUS_ADDRESS port must be between 1 and 65535")
+            if not socket_path.startswith("/") or "\x00" in socket_path:
+                raise ValueError("TCU_DBUS_ADDRESS requires an absolute Unix socket path")
         else:
             raise ValueError(
-                "TCU_DBUS_ADDRESS must be unix:path=... or a loopback tcp: address"
+                "TCU_DBUS_ADDRESS must use an absolute local Unix socket in unix:path=... form; "
+                "configure any protected remote proxy separately"
             )
     return TCUConfig(
         enabled=enabled,

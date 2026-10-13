@@ -21,6 +21,11 @@ class TCUTimeout(TCUError):
     status_code = 504
 
 
+class TCUQueueFull(TCUError):
+    code = "queue_full"
+    status_code = 429
+
+
 class DbusTargetNotFound(TCUError):
     code = "dbus_target_not_found"
     status_code = 404

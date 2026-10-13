@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from ..events.models import EventType
+
 
 class MethodCallRequest(BaseModel):
     service: str = Field(
@@ -60,10 +62,22 @@ class TCUStatus(BaseModel):
     error: str | None = None
 
 
+class TCUObject(BaseModel):
+    object_path: str
+    discovery: Literal["configured"]
+    service: str | None = None
+
+
+class IntrospectionResult(BaseModel):
+    service: str
+    object_path: str
+    xml: str
+
+
 class TCUEventMessage(BaseModel):
-    schema_version: int = 1
+    schema_version: Literal[1] = 1
     event_id: str
-    event_type: str
+    event_type: EventType
     timestamp: str
     request_id: str | None = None
     payload: dict[str, Any]

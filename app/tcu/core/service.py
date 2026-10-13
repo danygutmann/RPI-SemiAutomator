@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections import OrderedDict
 from typing import Any
 
+from dbus_next.validators import (
+    is_bus_name_valid,
+    is_interface_name_valid,
+    is_member_name_valid,
+    is_object_path_valid,
+)
+
 from ..dbus.client import DBusClient
-from ..dbus.exceptions import TCUError, TCUTimeout
+from ..dbus.exceptions import TCUError, TCUQueueFull, TCUTimeout
 from ..events.dispatcher import EventDispatcher
 from ..events.models import TCUEvent
 from .config import TCUConfig
@@ -16,6 +24,7 @@ from .models import CallRecord, utc_now
 
 MAX_CALL_HISTORY = 1000
 MAX_ACTIVE_CALLS = 16
+MAX_PENDING_CALLS = 64
 
 
 class TCUService:
@@ -31,6 +40,7 @@ class TCUService:
         self._calls: OrderedDict[str, CallRecord] = OrderedDict()
         self._tasks: set[asyncio.Task] = set()
         self._active_calls = asyncio.Semaphore(MAX_ACTIVE_CALLS)
+        self._lifecycle_lock = asyncio.Lock()
         self._unsubscribe_signals = None
         self._unsubscribe_status = self.client.subscribe_status(self._on_status)
 
@@ -38,33 +48,37 @@ class TCUService:
         return self.client.status()
 
     async def connect(self) -> dict[str, Any]:
-        try:
-            status = await self.client.connect()
+        async with self._lifecycle_lock:
+            try:
+                status = await self.client.connect()
+                await self.events.publish(
+                    TCUEvent.create("connection.status", {"status": status})
+                )
+                await self._ensure_signal_subscription()
+                return status
+            except TCUError as exc:
+                if self.status().get("connected"):
+                    await self.client.disconnect()
+                await self.events.publish(
+                    TCUEvent.create("connection.status", {"status": self.status()})
+                )
+                await self.events.publish(
+                    TCUEvent.create(
+                        "tcu.error", {"code": exc.code, "message": str(exc)}
+                    )
+                )
+                raise
+
+    async def disconnect(self) -> dict[str, Any]:
+        async with self._lifecycle_lock:
+            status = await self.client.disconnect()
+            if self._unsubscribe_signals is not None:
+                self._unsubscribe_signals()
+                self._unsubscribe_signals = None
             await self.events.publish(
                 TCUEvent.create("connection.status", {"status": status})
             )
-            await self._ensure_signal_subscription()
             return status
-        except TCUError as exc:
-            await self.events.publish(
-                TCUEvent.create("connection.status", {"status": self.status()})
-            )
-            await self.events.publish(
-                TCUEvent.create(
-                    "tcu.error", {"code": exc.code, "message": str(exc)}
-                )
-            )
-            raise
-
-    async def disconnect(self) -> dict[str, Any]:
-        status = await self.client.disconnect()
-        if self._unsubscribe_signals is not None:
-            self._unsubscribe_signals()
-            self._unsubscribe_signals = None
-        await self.events.publish(
-            TCUEvent.create("connection.status", {"status": status})
-        )
-        return status
 
     async def services(self) -> list[str]:
         return await self.client.list_services()
@@ -84,6 +98,11 @@ class TCUService:
         arguments: list[Any],
         timeout_seconds: float | None = None,
     ) -> CallRecord:
+        pending = sum(
+            call.status in {"accepted", "running"} for call in self._calls.values()
+        )
+        if pending >= MAX_PENDING_CALLS:
+            raise TCUQueueFull("TCU call queue is full; retry after calls complete")
         timeout = (
             self.config.timeout_seconds
             if timeout_seconds is None
@@ -91,6 +110,24 @@ class TCUService:
         )
         if not 0 < timeout <= 60:
             raise ValueError("timeout_seconds must be greater than 0 and at most 60")
+        if not is_bus_name_valid(service):
+            raise ValueError("service is not a valid D-Bus bus name")
+        if not is_object_path_valid(object_path):
+            raise ValueError("object_path is not a valid D-Bus object path")
+        if not is_interface_name_valid(interface):
+            raise ValueError("interface is not a valid D-Bus interface")
+        if not is_member_name_valid(method):
+            raise ValueError("method is not a valid D-Bus member name")
+        if len(arguments) > 64:
+            raise ValueError("arguments may contain at most 64 values")
+        try:
+            argument_bytes = json.dumps(
+                arguments, allow_nan=False, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError) as exc:
+            raise ValueError("arguments must be valid JSON values") from exc
+        if len(argument_bytes) > 256 * 1024:
+            raise ValueError("arguments exceed the 256 KiB size limit")
         record = CallRecord.create(
             service,
             object_path,

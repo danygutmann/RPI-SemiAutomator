@@ -39,12 +39,12 @@ definitions, credentials, SSH configuration, or proxy specification. Therefore
 the actual TCU route cannot be verified here, and the application does not
 invent a target or start an SSH session. The chosen library is `dbus-next`
 0.2.3, an asynchronous D-Bus client. It connects only to an explicitly
-configured Unix socket or a loopback TCP bus address.
+configured local Unix socket.
 
-For remote use, an operator must first provide a D-Bus socket or a loopback
-endpoint backed by a verified, protected tunnel/proxy. The application does not
-provide SSH, credentials, or an unprotected remote TCP bus. TCU support is
-disabled by default and reports a clear transport error until configured.
+For remote use, an operator must first provide a local Unix socket backed by a
+verified, protected tunnel/proxy. The application does not provide SSH,
+credentials, or any D-Bus TCP transport. TCU support is disabled by default and
+reports a clear transport error until configured.
 
 ## Method-call sequence
 
@@ -61,8 +61,9 @@ disabled by default and reports a clear transport error until configured.
 6. A local timeout does not prove the remote method did not execute. The service
    never retries state-changing calls automatically.
 
-At most 16 method tasks run concurrently. The request result cache retains the
-most recent 1,000 calls in memory; older request IDs expire and return 404.
+At most 16 method tasks run concurrently, with no more than 64 accepted/running
+calls queued. The request result cache retains the most recent 1,000 calls in
+memory; older request IDs expire and return 404.
 
 ## Signals, queues, and errors
 
@@ -72,7 +73,8 @@ subscribers. Disconnect removes the handler with the bus connection; reconnect
 registers a fresh handler, avoiding duplicate subscriptions. An unexpected bus
 disconnect updates status and emits connection/error events.
 
-Each WebSocket client has a queue limited to 100 events. Publishing never waits
+At most 100 WebSocket clients may be connected, each with a queue limited to
+100 events. Publishing never waits
 for network I/O; when a queue is full, the oldest queued event is discarded.
 The in-process history is also bounded (1,000 events) and is used by the GUI;
 it is not a durable event log. A disconnected or slow external client can miss
