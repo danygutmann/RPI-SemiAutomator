@@ -25,7 +25,7 @@ def can_page() -> None:
             )
 
     selected_profile: dict[str, str | None] = {"id": None}
-    sequence = {"value": 0}
+    sequence = {"value": 0, "dropped": 0}
     profile_options = {profile.id: profile.name for profile in list_profiles()}
     dbcs = list_dbcs()
     dbc_options = {dbc["id"]: dbc["name"] for dbc in dbcs}
@@ -43,7 +43,7 @@ def can_page() -> None:
             bitrate = ui.number("Bitrate", value=500000, min=10000, max=10000000).classes("w-32")
             fd = ui.switch("CAN FD")
             data_bitrate = ui.number("FD-Datenrate", value=2000000, min=10000, max=20000000).classes("w-36")
-            listen_only = ui.switch("Listen-only", value=True)
+            listen_only =             listen_only = ui.switch("Listen-only", value=True)
         with ui.row().classes("items-center gap-2"):
             dbc_select = ui.select(dbc_options, label="DBC", with_input=True).classes("w-56")
             ui.upload(
@@ -125,8 +125,11 @@ def can_page() -> None:
                     ui.notify("Bitte zuerst ein CAN-Profil speichern", type="warning")
                     return
                 can_manager.connect(profile)
-                sequence["value"] = 0
-                ui.notify("CAN verbunden (Listen-only)", type="positive")
+                sequence["value"] = can_manager.position
+                sequence["dropped"] = 0
+                frame_table.rows = []
+                frame_table.update()
+                ui.notify("CAN verbunden; Senden ist zunächst gesperrt", type="positive")
             except Exception as exc:  # noqa: BLE001
                 ui.notify(f"CAN-Verbindung fehlgeschlagen: {exc}", type="negative")
 
@@ -230,8 +233,10 @@ def can_page() -> None:
             frames, current, client_dropped = can_manager.frames(sequence["value"], 100)
             sequence["value"] = current
             if client_dropped:
+                sequence["dropped"] += client_dropped
+            if sequence["dropped"]:
                 dropped_label.set_text(
-                    f"Verluste: {status.dropped_frames} · für UI übersprungen: {client_dropped}"
+                    f"Verluste: {status.dropped_frames} · für UI übersprungen: {sequence['dropped']}"
                 )
             if frames:
                 rows = list(frame_table.rows)
@@ -239,7 +244,9 @@ def can_page() -> None:
                     {
                         "timestamp": frame["timestamp"],
                         "id": f"0x{frame['arbitration_id']:X}",
-                        "format": "FD" if frame["is_fd"] else "Classic",
+                        "format": "ERROR" if frame["is_error_frame"] else (
+                            "FD" if frame["is_fd"] else "Classic"
+                        ),
                         "dlc": frame["dlc"],
                         "data": frame["data"],
                     }

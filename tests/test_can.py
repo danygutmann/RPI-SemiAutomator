@@ -11,7 +11,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from canbus.manager import CANManager
 from canbus.models import CANProfile
-from canbus.profiles import save_dbc, save_profile
+from canbus.profiles import save_dbc
 
 
 DBC = """VERSION ""
@@ -25,6 +25,31 @@ BU_: ECU
 BO_ 291 Example: 1 ECU
  SG_ Value : 0|8@1+ (1,0) [0|255] "" ECU
 """
+
+
+def test_backend_uses_driver_listen_only_and_kvaser_channel(monkeypatch):
+    import canbus.backend as backend
+
+    observed = {}
+
+    def bus_factory(**kwargs):
+        observed.clear()
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(backend.can, "Bus", bus_factory)
+    backend.open_bus(
+        CANProfile("vector", "Vector", interface="vector", channel="0", listen_only=True)
+    )
+    assert observed["listen_only"] is True
+    backend.open_bus(
+        CANProfile("pcan", "PCAN", interface="pcan", channel="PCAN_USBBUS1", listen_only=True)
+    )
+    assert observed["state"] is can.BusState.PASSIVE
+    backend.open_bus(
+        CANProfile("kvaser", "Kvaser", interface="kvaser", channel="1")
+    )
+    assert observed["channel"] == 1
 
 
 def wait_for_frames(manager, count=1):
@@ -221,6 +246,31 @@ def test_dbc_upload_validation_preview_and_value_ranges(can_client):
         json={"profile_id": profile["id"], "message": "Example", "signals": {"Value": 256}},
     )
     assert invalid.status_code == 400
+
+
+def test_dbc_send_requires_explicit_transmit_enable(can_client):
+    dbc_id = save_dbc("safe-name.dbc", DBC.encode())["id"]
+    profile = can_client.post(
+        "/api/can/profiles",
+        json={
+            "name": "DBC-send",
+            "interface": "virtual",
+            "channel": "dbc-send",
+            "dbc_id": dbc_id,
+            "listen_only": False,
+        },
+    ).json()
+    assert can_client.post("/api/can/connect", json={"profile_id": profile["id"]}).status_code == 200
+    payload = {
+        "profile_id": profile["id"],
+        "message": "Example",
+        "signals": {"Value": 42},
+    }
+    assert can_client.post("/api/can/dbc/send", json=payload).status_code == 409
+    assert can_client.post("/api/can/transmit-mode", json={"enabled": True}).status_code == 200
+    response = can_client.post("/api/can/dbc/send", json=payload)
+    assert response.status_code == 200
+    assert response.json()["preview"]["data"] == "2A"
 
 
 def test_can_endpoints_use_existing_optional_api_token(can_client, monkeypatch):

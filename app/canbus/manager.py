@@ -34,6 +34,7 @@ class CANManager:
         self._bus_factory = bus_factory
         self._frames: deque[CANFrame] = deque(maxlen=max_frames)
         self._lock = threading.RLock()
+        self._lifecycle_lock = threading.Lock()
         self._bus = None
         self._profile: CANProfile | None = None
         self._thread: threading.Thread | None = None
@@ -51,13 +52,18 @@ class CANManager:
                 error=self._error,
                 dropped_frames=self._dropped,
                 transmit_enabled=self._transmit_enabled,
-                mode="transmit" if self._transmit_enabled else "listen-only",
+                mode="transmit-enabled" if self._transmit_enabled else "transmit-disabled",
             )
 
     @property
     def profile(self) -> CANProfile | None:
         with self._lock:
             return self._profile
+
+    @property
+    def position(self) -> int:
+        with self._lock:
+            return self._sequence
 
     def frames(self, after: int = 0, limit: int = 200) -> tuple[list[dict], int, int]:
         with self._lock:
@@ -70,24 +76,29 @@ class CANManager:
             return [frame.to_dict() for frame in batch], next_cursor, max(0, retained_start - after)
 
     def connect(self, profile: CANProfile) -> dict:
-        self.disconnect()
-        try:
-            bus = self._bus_factory(profile)
-        except Exception as exc:  # python-can uses backend-specific exceptions
+        with self._lifecycle_lock:
+            self._disconnect()
+            try:
+                bus = self._bus_factory(profile)
+            except Exception as exc:  # python-can uses backend-specific exceptions
+                with self._lock:
+                    self._error = str(exc)
+                raise
             with self._lock:
-                self._error = str(exc)
-            raise
-        with self._lock:
-            self._bus = bus
-            self._profile = profile
-            self._error = None
-            self._transmit_enabled = False
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._receive_loop, daemon=True)
-            self._thread.start()
+                self._bus = bus
+                self._profile = profile
+                self._error = None
+                self._transmit_enabled = False
+                self._stop.clear()
+                self._thread = threading.Thread(target=self._receive_loop, daemon=True)
+                self._thread.start()
         return self.status().to_dict()
 
     def disconnect(self) -> None:
+        with self._lifecycle_lock:
+            self._disconnect()
+
+    def _disconnect(self) -> None:
         self._stop.set()
         with self._lock:
             bus, thread = self._bus, self._thread
@@ -116,28 +127,26 @@ class CANManager:
         with self._lock:
             bus = self._bus
             profile = self._profile
-            enabled = self._transmit_enabled
-        if bus is None:
-            raise ValueError("CAN bus is not connected")
-        if not enabled:
-            raise PermissionError("CAN transmission is disabled")
-        if profile is None or is_fd != profile.fd:
-            raise ValueError("Frame format does not match the connected profile")
-        if not isinstance(arbitration_id, int) or not 0 <= arbitration_id <= (
-            0x1FFFFFFF if is_extended_id else 0x7FF
-        ):
-            raise ValueError("Invalid CAN arbitration ID")
-        if len(data) > (64 if is_fd else 8):
-            raise ValueError("CAN frame payload exceeds the selected format")
-        message = can.Message(
-            arbitration_id=arbitration_id,
-            data=data,
-            is_extended_id=is_extended_id,
-            is_fd=is_fd,
-        )
-        bus.send(message)
-        frame = CANFrame.from_message(message).to_dict()
-        with self._lock:
+            if bus is None:
+                raise ValueError("CAN bus is not connected")
+            if not self._transmit_enabled:
+                raise PermissionError("CAN transmission is disabled")
+            if profile is None or is_fd != profile.fd:
+                raise ValueError("Frame format does not match the connected profile")
+            if not isinstance(arbitration_id, int) or not 0 <= arbitration_id <= (
+                0x1FFFFFFF if is_extended_id else 0x7FF
+            ):
+                raise ValueError("Invalid CAN arbitration ID")
+            if len(data) > (64 if is_fd else 8):
+                raise ValueError("CAN frame payload exceeds the selected format")
+            message = can.Message(
+                arbitration_id=arbitration_id,
+                data=data,
+                is_extended_id=is_extended_id,
+                is_fd=is_fd,
+            )
+            bus.send(message)
+            frame = CANFrame.from_message(message).to_dict()
             self._append(frame)
         return {"ok": True, "status": "sent", "frame": frame}
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
@@ -20,6 +21,13 @@ from .profiles import (
 can_manager = CANManager()
 
 
+async def _json_body(request: Request):
+    try:
+        return await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON request body") from exc
+
+
 def register_api(app: FastAPI, check_token, bearer) -> None:
     def auth(request: Request) -> None:
         check_token(bearer(request))
@@ -32,12 +40,12 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.post("/api/can/profiles", status_code=201)
     async def api_can_save_profile(request: Request) -> dict:
         auth(request)
-        return save_profile(await request.json()).to_dict()
+        return save_profile(await _json_body(request)).to_dict()
 
     @app.put("/api/can/profiles/{profile_id}")
     async def api_can_update_profile(profile_id: str, request: Request) -> dict:
         auth(request)
-        body = await request.json()
+        body = await _json_body(request)
         if isinstance(body, dict) and "id" in body:
             if body["id"] != profile_id:
                 raise HTTPException(status_code=400, detail="Profile ID does not match URL")
@@ -60,7 +68,7 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.post("/api/can/connect")
     async def api_can_connect(request: Request) -> dict:
         auth(request)
-        body = await request.json()
+        body = await _json_body(request)
         profile_id = body.get("profile_id") if isinstance(body, dict) else None
         if not isinstance(profile_id, str):
             raise HTTPException(status_code=400, detail="'profile_id' is required")
@@ -79,7 +87,7 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.post("/api/can/transmit-mode")
     async def api_can_transmit_mode(request: Request) -> dict:
         auth(request)
-        body = await request.json()
+        body = await _json_body(request)
         enabled = body.get("enabled") if isinstance(body, dict) else None
         if not isinstance(enabled, bool):
             raise HTTPException(status_code=400, detail="'enabled' must be a boolean")
@@ -105,7 +113,7 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.post("/api/can/send")
     async def api_can_send(request: Request) -> dict:
         auth(request)
-        body = await request.json()
+        body = await _json_body(request)
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="A JSON object is required")
         arbitration_id = body.get("arbitration_id")
@@ -152,7 +160,7 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.post("/api/can/dbc/preview")
     async def api_can_dbc_preview(request: Request) -> dict:
         auth(request)
-        body = await request.json()
+        body = await _json_body(request)
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="A JSON object is required")
         profile_id = body.get("profile_id")
@@ -165,7 +173,7 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.post("/api/can/dbc/send")
     async def api_can_dbc_send(request: Request) -> dict:
         auth(request)
-        body = await request.json()
+        body = await _json_body(request)
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="A JSON object is required")
         profile_id = body.get("profile_id")
@@ -176,12 +184,15 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
         if can_manager.profile is None or can_manager.profile.id != profile.id:
             raise HTTPException(status_code=409, detail="Connect the selected CAN profile first")
         preview = message_preview(profile, message_name, body.get("signals", {}))
-        result = can_manager.send(
-            preview["arbitration_id"],
-            bytes.fromhex(preview["data"]),
-            preview["is_extended_id"],
-            preview["is_fd"],
-        )
+        try:
+            result = can_manager.send(
+                preview["arbitration_id"],
+                bytes.fromhex(preview["data"]),
+                preview["is_extended_id"],
+                preview["is_fd"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=409, detail=f"CAN send failed: {exc}") from exc
         return {"preview": preview, **result}
 
     @app.websocket("/api/can/ws")

@@ -74,7 +74,7 @@ zugehörigen Pfade können über `RPI_SEMIAUTOMATOR_CAN_PROFILES` und
 `RPI_SEMIAUTOMATOR_DBC_DIR` überschrieben werden.
 
 Der CAN-Manager öffnet zentral höchstens eine Verbindung für alle Clients.
-Neue Profile starten im **Listen-only-Modus**; Senden ist zusätzlich
+Neue Profile starten mit `listen_only: true`; Senden ist zusätzlich
 anwendungsseitig gesperrt. Zum Senden muss ein Profil mit `listen_only: false`
 gespeichert und verbunden sowie die Sendefreigabe ausdrücklich aktiviert
 werden. Es gibt kein zyklisches Senden. Der DBC-Generator zeigt vor jeder
@@ -89,7 +89,11 @@ jeweiligen Linux-Treiber und Hersteller-SDKs (PEAK PCAN-Basic, Vector XL
 Driver Library bzw. Kvaser CANlib); diese werden nicht pauschal in das
 Standard-Container-Image installiert. Geräte-, SDK-, Kernel- und
 Architekturkompatibilität muss vor Hardwareeinsatz je Adapter geprüft werden.
-SocketCAN-Interfaces und Bitraten werden auf dem Host eingerichtet. Die
+Für Vector und PCAN konfiguriert python-can bei `listen_only: true` den
+Treiber entsprechend. Bei SocketCAN und Kvaser wird die Sendefreigabe in der
+Anwendung gesperrt; ein echter Hardware-Listen-only-Modus (ohne ACK) muss, wo
+verfügbar, separat konfiguriert werden. SocketCAN-Interfaces und Bitraten
+werden auf dem Host eingerichtet. Die
 Compose-Datei setzt weder `privileged: true` noch pauschale CAN-Rechte; bei
 Bedarf müssen die minimal erforderlichen Geräte-/Netzwerkrechte gezielt
 konfiguriert werden. CAN FD erfordert FD-fähige Hardware und passende
