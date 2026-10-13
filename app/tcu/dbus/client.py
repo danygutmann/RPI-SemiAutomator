@@ -62,10 +62,16 @@ class DBusClient:
                 "No D-Bus tunnel is configured; set TCU_DBUS_ADDRESS to a local Unix "
                 "socket or loopback SSH-forwarded address"
             )
-        if address.startswith("tcp:") and not any(
-            f"host={host}" in address for host in ("127.0.0.1", "::1", "localhost")
-        ):
-            raise TransportNotConfigured("Unprotected non-loopback D-Bus TCP is disabled")
+        if address.startswith("tcp:"):
+            fields = dict(
+                part.split("=", 1)
+                for part in address.removeprefix("tcp:").split(",")
+                if "=" in part
+            )
+            if fields.get("host") not in {"127.0.0.1", "::1", "localhost"}:
+                raise TransportNotConfigured(
+                    "Unprotected non-loopback D-Bus TCP is disabled"
+                )
         bus = MessageBus(bus_address=address)
         try:
             await asyncio.wait_for(bus.connect(), self.config.timeout_seconds)

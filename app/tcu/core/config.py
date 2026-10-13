@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 
 def _positive_float(name: str, default: float, maximum: float) -> float:
@@ -38,12 +37,10 @@ class TCUConfig:
 
 def load_config() -> TCUConfig:
     """Load settings without exposing credentials or making a connection."""
-    enabled = os.environ.get("TCU_ENABLED", "false").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    raw_enabled = os.environ.get("TCU_ENABLED", "false").strip().lower()
+    if raw_enabled not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+        raise ValueError("TCU_ENABLED must be a boolean value")
+    enabled = raw_enabled in {"1", "true", "yes", "on"}
     address = os.environ.get("TCU_DBUS_ADDRESS", "").strip() or None
     paths = tuple(
         dict.fromkeys(
@@ -86,10 +83,3 @@ def load_config() -> TCUConfig:
         timeout_seconds=_positive_float("TCU_TIMEOUT_SECONDS", 10.0, 60.0),
         known_object_paths=paths,
     )
-
-
-def socket_path_from_address(config: TCUConfig) -> Path | None:
-    """Return the configured socket path for diagnostics, never its contents."""
-    if config.bus_address and config.bus_address.startswith("unix:path="):
-        return Path(config.bus_address.removeprefix("unix:path="))
-    return None

@@ -8,10 +8,20 @@ from pydantic import BaseModel, Field
 
 
 class MethodCallRequest(BaseModel):
-    service: str = Field(min_length=1, max_length=255)
-    object_path: str = Field(min_length=1, max_length=1024, pattern=r"^/")
-    interface: str = Field(min_length=1, max_length=255)
-    method: str = Field(min_length=1, max_length=255)
+    service: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^(?:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+|:[0-9]+\.[0-9]+)$",
+    )
+    object_path: str = Field(
+        min_length=1, max_length=1024, pattern=r"^/(?:[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*)?$"
+    )
+    interface: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$",
+    )
+    method: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     arguments: list[Any] = Field(default_factory=list, max_length=64)
     timeout_seconds: float | None = Field(default=None, gt=0, le=60)
 
