@@ -13,6 +13,8 @@ from typing import Callable
 from fastapi import HTTPException, Request
 from nicegui import app, ui
 
+from ui_common import setup_dark_mode
+
 RELAY_CHANNELS = 8
 PSU_MAX_CURRENT = 40.0
 PSU_MAX_VOLTAGE = 12.0
@@ -109,9 +111,11 @@ def _header(active: str) -> None:
     with ui.header().classes("items-center justify-between").props("bordered"):
         ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
         nav(active)
-        ui.button(
-            "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
-        ).props("flat color=white")
+        with ui.row().classes("items-center"):
+            setup_dark_mode()
+            ui.button(
+                "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
+            ).props("flat color=white")
 
 
 @ui.page("/relay")
