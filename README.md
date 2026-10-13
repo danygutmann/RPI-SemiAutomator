@@ -20,6 +20,8 @@ Daten live mitgelesen, eigene Befehle gesendet und vordefinierte
 - Eigene **Einstellungen**-Seite zum Hinzufügen/Entfernen von Favoriten sowie zum Sichern (Backup) und Neuladen der gespeicherten Einstellungen
 - Läuft als Docker-Container, geeignet für den Raspberry Pi
 - CAN-Monitor und DBC-Message-Generator mit python-can und cantools
+- TCU-D-Bus-Tab mit REST-/WebSocket-Schnittstellen (Transport muss extern
+  eingerichtet werden)
 
 ## Konfiguration
 
@@ -98,6 +100,23 @@ Compose-Datei setzt weder `privileged: true` noch pauschale CAN-Rechte; bei
 Bedarf müssen die minimal erforderlichen Geräte-/Netzwerkrechte gezielt
 konfiguriert werden. CAN FD erfordert FD-fähige Hardware und passende
 Treiberkonfiguration.
+
+## TCU
+
+Der TCU-Tab `/tcu` und die versionierte Schnittstelle `/api/v1/tcu` verwenden
+einen gemeinsamen Backend-Service. TCU-Unterstützung ist standardmäßig
+deaktiviert. Die Ziel-TCU und deren Remote-D-Bus-Zugangsweg sind in diesem
+Repository nicht festgelegt; vor dem Aktivieren muss ein geschützter
+Remote-Zugangsweg mit lokalem Unix-Socket separat eingerichtet werden.
+D-Bus-TCP wird nicht unterstützt.
+
+Konfiguration und Voraussetzungen: [TCU-Konfiguration](docs/tcu/configuration.md).
+Architektur und offene Transportvoraussetzung:
+[TCU-Architektur](docs/tcu/architecture.md). Die vollständigen Schnittstellen
+stehen in [REST API](docs/tcu/api.md) und
+[WebSocket-Ereignissen](docs/tcu/websocket.md); bei Fehlern hilft die
+[Fehlersuche](docs/tcu/troubleshooting.md). Swagger/OpenAPI ist wie bisher unter
+`/docs` und `/openapi.json` erreichbar.
 
 ## Start mit Docker
 

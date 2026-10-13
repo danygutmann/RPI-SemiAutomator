@@ -27,6 +27,9 @@ from config import (
 )
 from canbus.api import can_manager, register_api as register_can_api
 from canbus import panel as can_panel  # noqa: F401
+from tcu.api.routes import register_api as register_tcu_api
+from tcu.core.runtime import tcu_service
+from tcu.gui import tab as tcu_tab  # noqa: F401
 from panels import nav, register_api
 from serial_manager import SerialConnection, SerialManager
 from serial_panel import build_port_card
@@ -650,12 +653,14 @@ async def api_ws_alias(
 
 register_api(_check_api_token, _bearer)
 register_can_api(app, _check_api_token, _bearer)
+register_tcu_api(app, _check_api_token, _bearer, tcu_service)
 
 
 @app.on_shutdown
-def _cleanup() -> None:
+async def _cleanup() -> None:
     manager.disconnect_all()
     can_manager.shutdown()
+    await tcu_service.shutdown()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

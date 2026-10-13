@@ -98,6 +98,7 @@ def nav(active: str) -> None:
         for key, label, target in (
             ("serial", "Seriell", "/"),
             ("can", "CAN", "/can"),
+            ("tcu", "TCU", "/tcu"),
             ("relay", "Relais", "/relay"),
             ("psu", "Netzteil", "/psu"),
         ):

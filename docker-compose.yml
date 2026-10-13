@@ -25,3 +25,7 @@ services:
       - RPI_SEMIAUTOMATOR_FAVORITES=/app/data/favorites.yaml
       - RPI_SEMIAUTOMATOR_CAN_PROFILES=/app/data/can_profiles.yaml
       - RPI_SEMIAUTOMATOR_DBC_DIR=/app/data/dbc
+      - TCU_ENABLED=${TCU_ENABLED:-false}
+      - TCU_DBUS_ADDRESS=${TCU_DBUS_ADDRESS:-}
+      - TCU_TIMEOUT_SECONDS=${TCU_TIMEOUT_SECONDS:-10}
+      - TCU_OBJECT_PATHS=${TCU_OBJECT_PATHS:-/}
