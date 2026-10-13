@@ -64,7 +64,8 @@ def build_port_card(
             key = json.dumps(f"rpi-semiautomator-terminal-height:{device}")
             ui.run_javascript(
                 f"""
-                const element = getElement({terminal.id});
+                const component = getElement({terminal.id});
+                const element = component && component.$el;
                 if (element) {{
                     const key = {key};
                     const savedHeight = Number(localStorage.getItem(key));
@@ -72,6 +73,7 @@ def build_port_card(
                     new ResizeObserver(entries => {{
                         const height = Math.round(entries[0].contentRect.height);
                         if (height >= 250) localStorage.setItem(key, String(height));
+                        runMethod({terminal.id}, "fit", []);
                     }}).observe(element);
                 }}
                 """

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 from typing import Dict
 
 from fastapi import HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -22,9 +21,7 @@ from config import (
     load_config,
     load_favorites,
     load_macros,
-    remove_favorite,
     remove_macro,
-    save_favorite,
     save_macro,
     update_macro,
 )
