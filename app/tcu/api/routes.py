@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+
 from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -101,7 +101,7 @@ def register_api(
     )
     async def tcu_introspect(
         request: Request, service: str, object_path: str
-    ) -> dict[str, str] | JSONResponse:
+    ):
         auth(request)
         if not service.strip() or not object_path.startswith("/"):
             return _error("invalid_request", "Valid service and absolute object_path are required", 400)
@@ -144,12 +144,17 @@ def register_api(
             payload = MethodCallRequest.model_validate_json(body)
         except ValidationError as exc:
             details = [
-                {"location": error["loc"], "message": error["msg"], "type": error["type"]}
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
                 for error in exc.errors()
             ]
             return JSONResponse(
                 status_code=400,
-                content={"error": {"code": "invalid_request", "message": details}},
+                content={
+                    "error": {
+                        "code": "invalid_request",
+                        "message": "; ".join(details),
+                    }
+                },
             )
         try:
             record = backend.submit_call(
@@ -227,4 +232,3 @@ def register_api(
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             backend.events.unsubscribe(queue)
-

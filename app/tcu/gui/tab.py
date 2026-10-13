@@ -9,8 +9,8 @@ from nicegui import ui
 
 from ..core.runtime import config, tcu_service
 from ..events.models import TCUEvent
-from ...panels import nav
-from ...ui_common import setup_dark_mode
+from panels import nav
+from ui_common import setup_dark_mode
 
 MAX_VISIBLE_EVENTS = 200
 

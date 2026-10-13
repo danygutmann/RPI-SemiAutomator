@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 
 from .models import TCUEvent
 
@@ -10,7 +11,7 @@ from .models import TCUEvent
 class EventDispatcher:
     def __init__(self, queue_size: int = 100, history_size: int = 1000) -> None:
         self._queue_size = queue_size
-        self._history: asyncio.Queue[TCUEvent] = asyncio.Queue(maxsize=history_size)
+        self._history: deque[TCUEvent] = deque(maxlen=history_size)
         self._clients: set[asyncio.Queue[TCUEvent]] = set()
         self._dropped: dict[asyncio.Queue[TCUEvent], int] = {}
 
@@ -44,12 +45,10 @@ class EventDispatcher:
                 self._dropped[queue] = self._dropped.get(queue, 0) + 1
 
     def _retain(self, event: TCUEvent) -> None:
-        if self._history.full():
-            self._history.get_nowait()
-        self._history.put_nowait(event)
+        self._history.append(event)
 
     def history(self, limit: int = 100) -> list[TCUEvent]:
-        items = list(self._history._queue)
+        items = list(self._history)
         return items[-limit:]
 
     def dropped_for(self, queue: asyncio.Queue[TCUEvent]) -> int:

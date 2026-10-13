@@ -37,8 +37,10 @@ class DBusClient:
         self._last_change = datetime.now(timezone.utc).isoformat()
         self._introspection: dict[tuple[str, str], ET.Element] = {}
         self._signal_handlers: set[Callable[[dict[str, Any]], None]] = set()
+        self._status_handlers: set[Callable[[dict[str, Any]], None]] = set()
         self._signal_match_installed = False
         self._message_handler_added = False
+        self._monitor_task: asyncio.Task | None = None
 
     def status(self) -> dict[str, Any]:
         return {
@@ -81,6 +83,7 @@ class DBusClient:
         self._last_error = None
         self._introspection.clear()
         self._last_change = datetime.now(timezone.utc).isoformat()
+        self._monitor_task = asyncio.create_task(self._watch_disconnect(bus))
         await self._install_signal_handler()
         return self.status()
 
@@ -90,10 +93,14 @@ class DBusClient:
         message_handler_added = self._message_handler_added
         self._signal_match_installed = False
         self._message_handler_added = False
+        monitor, self._monitor_task = self._monitor_task, None
         if bus is not None:
             if message_handler_added:
                 bus.remove_message_handler(self._handle_message)
             bus.disconnect()
+        if monitor is not None:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
         self._last_change = datetime.now(timezone.utc).isoformat()
         return self.status()
 
@@ -122,8 +129,9 @@ class DBusClient:
         interface: str,
         method: str,
         arguments: list[Any],
+        timeout_seconds: float | None = None,
     ) -> tuple[list[Any], str]:
-        node = await self._get_introspection(service, object_path)
+        node = await self._get_introspection(service, object_path, timeout_seconds)
         interface_node = next(
             (item for item in node.findall("interface") if item.get("name") == interface),
             None,
@@ -165,7 +173,8 @@ class DBusClient:
                 member=method,
                 signature=in_signature,
                 body=body,
-            )
+            ),
+            timeout_seconds,
         )
         result_signature = reply.signature or ""
         output_types = SignatureTree._get(result_signature).types
@@ -185,6 +194,36 @@ class DBusClient:
             self._signal_handlers.discard(handler)
 
         return unsubscribe
+
+    def subscribe_status(
+        self, handler: Callable[[dict[str, Any]], None]
+    ) -> Callable[[], None]:
+        self._status_handlers.add(handler)
+
+        def unsubscribe() -> None:
+            self._status_handlers.discard(handler)
+
+        return unsubscribe
+
+    async def _watch_disconnect(self, bus: MessageBus) -> None:
+        try:
+            await bus.wait_for_disconnect()
+        except asyncio.CancelledError:
+            return
+        if self._bus is not bus:
+            return
+        self._bus = None
+        self._signal_match_installed = False
+        self._message_handler_added = False
+        self._introspection.clear()
+        self._last_error = "D-Bus connection was lost"
+        self._last_change = datetime.now(timezone.utc).isoformat()
+        status = self.status()
+        for handler in tuple(self._status_handlers):
+            try:
+                handler(status)
+            except Exception:
+                continue
 
     async def _install_signal_handler(self) -> None:
         if self._bus is None or not self._signal_handlers:
@@ -218,7 +257,9 @@ class DBusClient:
                 continue
         return False
 
-    async def _get_introspection(self, service: str, object_path: str) -> ET.Element:
+    async def _get_introspection(
+        self, service: str, object_path: str, timeout_seconds: float | None = None
+    ) -> ET.Element:
         self._require_bus()
         key = (service, object_path)
         if key in self._introspection:
@@ -229,7 +270,8 @@ class DBusClient:
                 path=object_path,
                 interface="org.freedesktop.DBus.Introspectable",
                 member="Introspect",
-            )
+            ),
+            timeout_seconds,
         )
         try:
             node = ET.fromstring(reply.body[0])
@@ -250,12 +292,13 @@ class DBusClient:
             )
         )
 
-    async def _call(self, message: Message) -> Message:
+    async def _call(
+        self, message: Message, timeout_seconds: float | None = None
+    ) -> Message:
         bus = self._require_bus()
+        timeout = timeout_seconds or self.config.timeout_seconds
         try:
-            reply = await asyncio.wait_for(
-                bus.call(message), self.config.timeout_seconds
-            )
+            reply = await asyncio.wait_for(bus.call(message), timeout)
         except asyncio.TimeoutError as exc:
             self._last_error = "D-Bus call timed out; remote execution may be uncertain"
             raise TCUTimeout(self._last_error) from exc
@@ -267,7 +310,16 @@ class DBusClient:
         if reply.message_type == MessageType.ERROR:
             name = reply.error_name or "org.freedesktop.DBus.Error.Failed"
             detail = str(reply.body[0])[:500] if reply.body else "Remote D-Bus error"
-            if name.endswith(("UnknownService", "NameHasNoOwner", "UnknownObject", "UnknownInterface", "UnknownMethod")):
+            if name.endswith(
+                (
+                    "ServiceUnknown",
+                    "UnknownService",
+                    "NameHasNoOwner",
+                    "UnknownObject",
+                    "UnknownInterface",
+                    "UnknownMethod",
+                )
+            ):
                 raise DbusTargetNotFound(f"{name}: {detail}")
             raise DbusRemoteError(name, detail)
         if reply.message_type != MessageType.METHOD_RETURN:

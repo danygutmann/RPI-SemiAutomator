@@ -32,6 +32,7 @@ class TCUService:
         self._tasks: set[asyncio.Task] = set()
         self._active_calls = asyncio.Semaphore(MAX_ACTIVE_CALLS)
         self._unsubscribe_signals = None
+        self._unsubscribe_status = self.client.subscribe_status(self._on_status)
 
     def status(self) -> dict[str, Any]:
         return self.client.status()
@@ -83,7 +84,11 @@ class TCUService:
         arguments: list[Any],
         timeout_seconds: float | None = None,
     ) -> CallRecord:
-        timeout = timeout_seconds or self.config.timeout_seconds
+        timeout = (
+            self.config.timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
         if not 0 < timeout <= 60:
             raise ValueError("timeout_seconds must be greater than 0 and at most 60")
         record = CallRecord.create(
@@ -130,6 +135,7 @@ class TCUService:
                         record.interface,
                         record.method,
                         record._arguments,
+                        record.timeout_seconds,
                     ),
                     timeout=record.timeout_seconds,
                 )
@@ -194,6 +200,27 @@ class TCUService:
 
         self._unsubscribe_signals = await self.client.subscribe_signals(on_signal)
 
+    def _on_status(self, status: dict[str, Any]) -> None:
+        if not status.get("connected") and self._unsubscribe_signals is not None:
+            self._unsubscribe_signals()
+            self._unsubscribe_signals = None
+
+        async def publish() -> None:
+            await self.events.publish(
+                TCUEvent.create("connection.status", {"status": status})
+            )
+            if status.get("error"):
+                await self.events.publish(
+                    TCUEvent.create(
+                        "tcu.error",
+                        {"code": "connection_lost", "message": status["error"]},
+                    )
+                )
+
+        task = asyncio.create_task(publish())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     async def shutdown(self) -> None:
         tasks = tuple(self._tasks)
         for task in tasks:
@@ -203,4 +230,7 @@ class TCUService:
         if self._unsubscribe_signals is not None:
             self._unsubscribe_signals()
             self._unsubscribe_signals = None
+        if self._unsubscribe_status is not None:
+            self._unsubscribe_status()
+            self._unsubscribe_status = None
         await self.client.disconnect()

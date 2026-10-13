@@ -111,6 +111,8 @@ def json_to_dbus_value(value: Any, signature: SignatureType) -> Any:
         if child.token == "{":
             if not isinstance(value, dict) or value.get("$type") != "dict":
                 raise ValueError("Dictionaries must use the typed dict JSON form")
+            if value.get("signature") != signature.signature:
+                raise ValueError(f"Dictionary signature must be '{signature.signature}'")
             entries = value.get("entries")
             if not isinstance(entries, list):
                 raise ValueError("Dictionary entries must be a list of key/value pairs")
@@ -130,6 +132,8 @@ def json_to_dbus_value(value: Any, signature: SignatureType) -> Any:
         return [json_to_dbus_value(item, child) for item in value]
     if token == "(":
         if isinstance(value, dict) and value.get("$type") == "struct":
+            if value.get("signature") != signature.signature:
+                raise ValueError(f"Struct signature must be '{signature.signature}'")
             value = value.get("value")
         if not isinstance(value, list) or len(value) != len(signature.children):
             raise ValueError("Struct arguments must contain one value per struct field")
