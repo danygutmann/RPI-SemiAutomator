@@ -97,6 +97,7 @@ def nav(active: str) -> None:
     with ui.row().classes("items-center gap-0"):
         for key, label, target in (
             ("serial", "Seriell", "/"),
+            ("can", "CAN", "/can"),
             ("relay", "Relais", "/relay"),
             ("psu", "Netzteil", "/psu"),
         ):

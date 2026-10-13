@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cantools
 from fastapi import HTTPException
 
 from .models import CANProfile
@@ -17,7 +18,7 @@ def message_preview(profile: CANProfile, message_name: str, signals: dict) -> di
     try:
         definition = database.get_message_by_name(message_name)
         payload = definition.encode(signals, strict=True)
-    except (KeyError, ValueError, TypeError) as exc:
+    except (KeyError, ValueError, TypeError, cantools.database.errors.EncodeError) as exc:
         raise HTTPException(status_code=400, detail=f"Invalid DBC message or signal value: {exc}") from exc
     if len(payload) > (64 if profile.fd else 8):
         raise HTTPException(status_code=400, detail="DBC message does not fit the CAN profile")

@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 
-from fastapi import HTTPException
 from nicegui import ui
 
 from panels import nav
 from ui_common import setup_dark_mode
 from .api import can_manager
 from .dbc import list_messages, message_preview
-from .models import CANProfile
 from .profiles import list_dbcs, list_profiles, save_profile
 
 
@@ -35,6 +33,7 @@ def can_page() -> None:
     with ui.column().classes("w-full p-4 gap-3"):
         with ui.row().classes("items-center gap-2"):
             profile_select = ui.select(profile_options, label="CAN-Profil").classes("w-56")
+            profile_name = ui.input("Profilname", value="CAN-Profil").classes("w-40")
             interface = ui.select(
                 {"socketcan": "SocketCAN", "pcan": "PEAK PCAN", "vector": "Vector", "kvaser": "Kvaser", "virtual": "Virtual"},
                 value="socketcan",
@@ -49,8 +48,9 @@ def can_page() -> None:
             dbc_select = ui.select(dbc_options, label="DBC", with_input=True).classes("w-56")
             ui.upload(
                 label="DBC hochladen (max. 1 MiB)",
-                on_upload=lambda event: upload_dbc(event),
+                on_upload=upload_dbc,
                 auto_upload=True,
+                max_file_size=1024 * 1024,
             ).props("accept=.dbc")
             status_label = ui.label()
             dropped_label = ui.label().classes("text-orange")
@@ -66,7 +66,7 @@ def can_page() -> None:
             def save_current_profile() -> None:
                 try:
                     values = {
-                        "name": (channel.value or "CAN") if not profile_select.value else profile_options.get(profile_select.value, "CAN"),
+                        "name": profile_name.value or "CAN-Profil",
                         "interface": interface.value,
                         "channel": channel.value,
                         "bitrate": int(bitrate.value or 500000),
@@ -75,8 +75,10 @@ def can_page() -> None:
                         "listen_only": bool(listen_only.value),
                         "dbc_id": dbc_select.value or None,
                     }
-                    profile = save_profile(values)
+                    current_id = selected_profile["id"] or profile_select.value
+                    profile = save_profile(values, current_id) if current_id else save_profile(values)
                     selected_profile["id"] = profile.id
+                    profile_name.value = profile.name
                     profile_options[profile.id] = profile.name
                     profile_select.value = profile.id
                     refresh_profiles()
@@ -103,12 +105,12 @@ def can_page() -> None:
             ui.button("Trennen", on_click=lambda: disconnect_profile(), icon="power_off").props("outline")
             transmit_switch = ui.switch("Senden freigeben", value=False, on_change=lambda event: set_transmit(event.value))
 
-        def upload_dbc(event) -> None:
+        async def upload_dbc(event) -> None:
             try:
-                content = event.content.read()
+                content = await event.file.read()
                 from .profiles import save_dbc
 
-                uploaded = save_dbc(event.name, content)
+                uploaded = save_dbc(event.file.name, content)
                 dbc_select.options = {item["id"]: item["name"] for item in list_dbcs()}
                 dbc_select.value = uploaded["id"]
                 dbc_select.update()
@@ -225,8 +227,12 @@ def can_page() -> None:
                 + (f" · Fehler: {status.error}" if status.error else "")
             )
             dropped_label.set_text(f"Verluste: {status.dropped_frames}")
-            frames, current, _ = can_manager.frames(sequence["value"], 100)
+            frames, current, client_dropped = can_manager.frames(sequence["value"], 100)
             sequence["value"] = current
+            if client_dropped:
+                dropped_label.set_text(
+                    f"Verluste: {status.dropped_frames} · für UI übersprungen: {client_dropped}"
+                )
             if frames:
                 rows = list(frame_table.rows)
                 rows.extend(

@@ -12,10 +12,11 @@ def open_bus(profile: CANProfile):
     config = {
         "interface": profile.interface,
         "channel": profile.channel,
-        "bitrate": profile.bitrate,
-        "fd": profile.fd,
         "receive_own_messages": False,
     }
-    if profile.fd:
+    if profile.interface != "virtual":
+        config["bitrate"] = profile.bitrate
+    if profile.fd and profile.interface != "virtual":
+        config["fd"] = True
         config["data_bitrate"] = profile.data_bitrate
     return can.Bus(**config)

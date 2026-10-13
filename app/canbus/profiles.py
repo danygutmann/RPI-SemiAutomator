@@ -97,9 +97,9 @@ def _validated_profile(payload: dict, profile_id: str | None = None) -> CANProfi
     dbc_id = payload.get("dbc_id")
     if not isinstance(name, str) or not name.strip() or len(name) > 80:
         raise HTTPException(status_code=400, detail="'name' must be 1..80 characters")
-    if interface not in SUPPORTED_INTERFACES:
+    if not isinstance(interface, str) or interface not in SUPPORTED_INTERFACES:
         raise HTTPException(status_code=400, detail="Unsupported CAN interface")
-    if not isinstance(channel, (str, int)) or not str(channel).strip() or len(str(channel)) > 128:
+    if isinstance(channel, bool) or not isinstance(channel, (str, int)) or not str(channel).strip() or len(str(channel)) > 128:
         raise HTTPException(status_code=400, detail="Invalid CAN channel")
     if isinstance(bitrate, bool) or not isinstance(bitrate, int) or not 10_000 <= bitrate <= 10_000_000:
         raise HTTPException(status_code=400, detail="'bitrate' must be 10000..10000000")

@@ -41,6 +41,7 @@ class CANManager:
         self._error: str | None = None
         self._dropped = 0
         self._transmit_enabled = False
+        self._sequence = 0
 
     def status(self) -> CANStatus:
         with self._lock:
@@ -64,15 +65,9 @@ class CANManager:
             retained_start = total - len(self._frames)
             start = max(after, retained_start)
             selected = list(self._frames)[start - retained_start :]
-            return [frame.to_dict() for frame in selected[:limit]], total, max(0, retained_start - after)
-
-    @property
-    def _sequence(self) -> int:
-        return getattr(self, "__sequence", 0)
-
-    @_sequence.setter
-    def _sequence(self, value: int) -> None:
-        self.__sequence = value
+            batch = selected[:limit]
+            next_cursor = min(total, start + len(batch))
+            return [frame.to_dict() for frame in batch], next_cursor, max(0, retained_start - after)
 
     def connect(self, profile: CANProfile) -> dict:
         self.disconnect()

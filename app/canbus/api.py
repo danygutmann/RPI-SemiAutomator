@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
@@ -38,7 +37,12 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
     @app.put("/api/can/profiles/{profile_id}")
     async def api_can_update_profile(profile_id: str, request: Request) -> dict:
         auth(request)
-        return save_profile(await request.json(), profile_id).to_dict()
+        body = await request.json()
+        if isinstance(body, dict) and "id" in body:
+            if body["id"] != profile_id:
+                raise HTTPException(status_code=400, detail="Profile ID does not match URL")
+            body = {key: value for key, value in body.items() if key != "id"}
+        return save_profile(body, profile_id).to_dict()
 
     @app.delete("/api/can/profiles/{profile_id}")
     def api_can_delete_profile(profile_id: str, request: Request) -> dict:
@@ -60,8 +64,9 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
         profile_id = body.get("profile_id") if isinstance(body, dict) else None
         if not isinstance(profile_id, str):
             raise HTTPException(status_code=400, detail="'profile_id' is required")
+        profile = get_profile(profile_id)
         try:
-            return can_manager.connect(get_profile(profile_id))
+            return can_manager.connect(profile)
         except Exception as exc:  # noqa: BLE001 - driver errors are backend-specific
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -130,7 +135,14 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
         content_length = request.headers.get("content-length")
         if content_length and (not content_length.isdigit() or int(content_length) > 1024 * 1024):
             raise HTTPException(status_code=413, detail="DBC upload exceeds 1 MiB")
-        return save_dbc(filename, await request.body())
+        chunks = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > 1024 * 1024:
+                raise HTTPException(status_code=413, detail="DBC upload exceeds 1 MiB")
+            chunks.append(chunk)
+        return save_dbc(filename, b"".join(chunks))
 
     @app.get("/api/can/dbcs/{dbc_id}/messages")
     def api_can_dbc_messages(dbc_id: str, request: Request) -> list[dict]:
@@ -193,4 +205,3 @@ def register_api(app: FastAPI, check_token, bearer) -> None:
                 await asyncio.sleep(0.1)
         except WebSocketDisconnect:
             return
-
