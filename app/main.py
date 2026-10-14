@@ -27,10 +27,14 @@ from config import (
 )
 from canbus.api import can_manager, register_api as register_can_api
 from canbus import panel as can_panel  # noqa: F401
+from psu.panel import register_api as register_psu_api
+from psu import panel as psu_panel  # noqa: F401
+from relay.panel import register_api as register_relay_api
+from relay import panel as relay_panel  # noqa: F401
 from tcu.api.routes import register_api as register_tcu_api
 from tcu.core.runtime import tcu_service
 from tcu.gui import tab as tcu_tab  # noqa: F401
-from panels import nav, register_api
+from panels import nav
 from serial_manager import SerialConnection, SerialManager
 from serial_panel import build_port_card
 from settings_page import build_settings_page
@@ -651,7 +655,8 @@ async def api_ws_alias(
     await _api_ws_for_device(websocket, device, token)
 
 
-register_api(_check_api_token, _bearer)
+register_relay_api(_check_api_token, _bearer)
+register_psu_api(_check_api_token, _bearer)
 register_can_api(app, _check_api_token, _bearer)
 register_tcu_api(app, _check_api_token, _bearer, tcu_service)
 
