@@ -1,6 +1,6 @@
-# TCU WebSocket
+# D-Bus event WebSocket
 
-Connect to `ws://<host>:8080/api/v1/tcu/ws` (or `wss://` behind a TLS-enabled
+Connect to `ws://<host>:8080/api/v1/dbus/ws` (or `wss://` behind a TLS-enabled
 reverse proxy). The socket is server-to-client event transport; initiate
 actions through REST. Client data frames are not accepted and close the
 connection. Authentication follows the
@@ -33,7 +33,7 @@ Event types:
 | `method.completed` | Status, result array, return signature, duration and call metadata. |
 | `method.failed` | Status, structured error and call metadata. |
 | `dbus.signal` | Sender/service, path, interface, signal member, signature and typed arguments. |
-| `tcu.error` | Error code and safe message. |
+| `tcu.error` | Legacy event type, error code, and safe message. |
 
 Example completion:
 
@@ -48,9 +48,9 @@ Example completion:
     "status": "completed",
     "result": [],
     "result_signature": "",
-    "service": "com.example.TcuService",
-    "object_path": "/com/example/Tcu",
-    "interface": "com.example.Tcu",
+    "service": "com.example.DBusService",
+    "object_path": "/com/example/DBus",
+    "interface": "com.example.DBus",
     "method": "GetStatus",
     "started_at": "2026-01-01T00:00:00+00:00",
     "completed_at": "2026-01-01T00:00:01+00:00",
@@ -73,7 +73,7 @@ and subscription are released. Failed sockets do not cancel backend calls.
 There is no persistent event log, acknowledgement, replay cursor, or guaranteed
 delivery. Events produced before a client connects are not sent to it, and
 events may be lost on overflow or disconnect without a replay notification.
-Reconnect and query `GET /api/v1/tcu/calls/{request_id}` to recover a method
+Reconnect and query `GET /api/v1/dbus/calls/{request_id}` to recover a method
 result while it remains in the bounded in-memory request history. Signal history
 is not persisted.
 

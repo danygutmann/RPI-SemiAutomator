@@ -32,7 +32,7 @@ def build_port_card(
                 content = "\n".join(connection.lines).encode("utf-8")
                 ui.download(content, f"{filename}.log", media_type="text/plain; charset=utf-8")
 
-            ui.button("Log herunterladen", on_click=download_log, icon="download").props(
+            ui.button("Download log", on_click=download_log, icon="download").props(
                 "outline"
             )
 

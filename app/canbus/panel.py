@@ -47,6 +47,20 @@ def can_page() -> None:
             listen_only = ui.switch("Listen-only", value=True)
         with ui.row().classes("items-center gap-2"):
             dbc_select = ui.select(dbc_options, label="DBC", with_input=True).classes("w-56")
+
+            async def upload_dbc(event) -> None:
+                try:
+                    content = await event.file.read()
+                    from .profiles import save_dbc
+
+                    uploaded = save_dbc(event.file.name, content)
+                    dbc_select.options = {item["id"]: item["name"] for item in list_dbcs()}
+                    dbc_select.value = uploaded["id"]
+                    dbc_select.update()
+                    ui.notify("DBC file validated and saved", type="positive")
+                except Exception as exc:  # noqa: BLE001
+                    ui.notify(f"DBC upload failed: {exc}", type="negative")
+
             ui.upload(
                 label="Upload DBC (max 1 MiB)",
                 on_upload=upload_dbc,
@@ -55,19 +69,6 @@ def can_page() -> None:
             ).props("accept=.dbc")
             status_label = ui.label()
             dropped_label = ui.label().classes("text-orange")
-
-        async def upload_dbc(event) -> None:
-            try:
-                content = await event.file.read()
-                from .profiles import save_dbc
-
-                uploaded = save_dbc(event.file.name, content)
-                dbc_select.options = {item["id"]: item["name"] for item in list_dbcs()}
-                dbc_select.value = uploaded["id"]
-                dbc_select.update()
-                ui.notify("DBC file validated and saved", type="positive")
-            except Exception as exc:  # noqa: BLE001
-                ui.notify(f"DBC upload failed: {exc}", type="negative")
 
         with ui.row().classes("items-center gap-2"):
             def refresh_profiles() -> None:

@@ -81,7 +81,7 @@ def dbus_page() -> None:
                 columns=[
                     {"name": "timestamp", "label": "Time", "field": "timestamp"},
                     {"name": "event_type", "label": "Event", "field": "event_type"},
-                    {"name": "request_id", "label": "Request-ID", "field": "request_id"},
+                    {"name": "request_id", "label": "Request ID", "field": "request_id"},
                     {"name": "payload", "label": "Data", "field": "payload"},
                 ],
                 rows=[],

@@ -102,7 +102,7 @@ class TCUService:
             call.status in {"accepted", "running"} for call in self._calls.values()
         )
         if pending >= MAX_PENDING_CALLS:
-            raise TCUQueueFull("TCU call queue is full; retry after calls complete")
+            raise TCUQueueFull("D-Bus call queue is full; retry after calls complete")
         timeout = (
             self.config.timeout_seconds
             if timeout_seconds is None
@@ -203,7 +203,7 @@ class TCUService:
             record.status = "failed"
             record.error = {
                 "code": "internal_error",
-                "message": "Internal TCU call error",
+                "message": "Internal D-Bus call error",
             }
             event_type = "method.failed"
             payload = {"status": record.status, "error": record.error}

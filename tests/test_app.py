@@ -500,3 +500,72 @@ def test_relay_and_psu_api():
     ] == 5
     assert client.put("/api/psu", json={"voltage": 13}).status_code == 400
     assert client.put("/api/psu", json={"current_limit": 41}).status_code == 400
+
+
+def test_dbus_panel_route_and_legacy_redirect_are_registered():
+    import main as main_module
+
+    paths = {getattr(route, "path", None) for route in main_module.app.routes}
+    assert "/dbus" in paths
+    assert "/tcu" in paths
+
+
+def test_panel_render_failure_is_isolated(monkeypatch):
+    import panels
+
+    messages = []
+
+    class Container:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def classes(self, *_):
+            return self
+
+    class Label:
+        def classes(self, *_):
+            return self
+
+    monkeypatch.setattr(panels.ui, "column", lambda: Container())
+    monkeypatch.setattr(panels.ui, "label", lambda message: messages.append(message) or Label())
+
+    @panels.isolate_panel("Broken")
+    def render_panel():
+        raise RuntimeError("panel failure")
+
+    assert render_panel() is None
+    assert messages == ["Broken panel failed to load. See the server log for details."]
+
+
+def test_panel_timer_failure_stops_timer_and_notifies_once(monkeypatch):
+    import panels
+
+    class Timer:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    timer = Timer()
+    notifications = []
+    callbacks = []
+
+    def make_timer(_interval, callback, **_kwargs):
+        callbacks.append(callback)
+        return timer
+
+    monkeypatch.setattr(panels.ui, "timer", make_timer)
+    monkeypatch.setattr(panels.ui, "notify", lambda *args, **kwargs: notifications.append(args[0]))
+
+    def fail():
+        raise RuntimeError("timer failure")
+
+    panels.safe_timer(1.0, fail, "Broken")
+    callbacks[0]()
+    callbacks[0]()
+
+    assert timer.cancelled
+    assert notifications == ["Broken panel update failed. See the server log for details."]

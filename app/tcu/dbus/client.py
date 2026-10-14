@@ -61,7 +61,7 @@ class DBusClient:
         if self._bus is not None:
             return self.status()
         if not self.config.enabled:
-            raise TransportNotConfigured("TCU support is disabled; set TCU_ENABLED=true")
+            raise TransportNotConfigured("D-Bus support is disabled; set DBUS_ENABLED=true")
         address = self.config.bus_address
         if not address:
             raise TransportNotConfigured(
@@ -357,5 +357,5 @@ class DBusClient:
 
     def _require_bus(self) -> MessageBus:
         if self._bus is None:
-            raise TCUNotConnected("TCU D-Bus is not connected")
+            raise TCUNotConnected("D-Bus is not connected")
         return self._bus
