@@ -33,10 +33,10 @@ from relay.panel import register_api as register_relay_api
 from relay import panel as relay_panel  # noqa: F401
 from tcu.api.routes import register_api as register_tcu_api
 from tcu.core.runtime import tcu_service
-from tcu.gui import tab as tcu_tab  # noqa: F401
-from panels import nav
+from tcu.gui import panel as dbus_panel  # noqa: F401
+from panels import isolate_panel, nav, safe_timer
 from serial_manager import SerialConnection, SerialManager
-from serial_panel import build_port_card
+from serial_interface.panel import build_port_card
 from settings_page import build_settings_page
 from ui_common import setup_dark_mode
 
@@ -108,6 +108,7 @@ def _macros_for(alias: str) -> list[Macro]:
 
 
 @ui.page("/")
+@isolate_panel("Serial")
 def index() -> None:
     ui.add_head_html(
         "<style>html, body, #app, .nicegui-content { height: 100%; }</style>"
@@ -130,47 +131,47 @@ def index() -> None:
         with ui.row().classes("items-center"):
             setup_dark_mode()
             ui.button(
-                "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
+                "Settings", icon="settings", on_click=lambda: ui.navigate.to("/settings")
             ).props("flat color=white")
 
     with ui.left_drawer(value=False, bordered=True) as drawer:
-        ui.label("Makros").classes("text-lg font-semibold")
-        ui.label("Rechtsklick auf einen Ordner oder ein Makro, um Makros hinzuzufügen.").classes(
+        ui.label("Macros").classes("text-lg font-semibold")
+        ui.label("Right-click a folder or macro to add a macro.").classes(
             "text-xs text-grey-6"
         )
         macros_container = ui.column().classes("w-full gap-1")
         with ui.dialog() as macro_dialog, ui.card():
-            ui.label("Makro hinzufügen").classes("text-lg font-bold")
+            ui.label("Add macro").classes("text-lg font-bold")
             macro_name_input = ui.input(label="Name").classes("w-64")
-            macro_command_input = ui.input(label="Kommando").classes("w-64")
-            macro_category_input = ui.input(label="Ordner (mit / verschachteln)").classes("w-64")
+            macro_command_input = ui.input(label="Command").classes("w-64")
+            macro_category_input = ui.input(label="Folder (use / for nesting)").classes("w-64")
             macro_alias_label = ui.label()
             with ui.row().classes("justify-end w-full gap-2"):
-                ui.button("Abbrechen", on_click=macro_dialog.close).props("flat")
-                confirm_macro_button = ui.button("Speichern", icon="add")
+                ui.button("Cancel", on_click=macro_dialog.close).props("flat")
+                confirm_macro_button = ui.button("Save", icon="add")
 
         def open_macro_dialog(category: str = "") -> None:
             macro_category_input.value = category
             device = page_state["active_device"]
             alias = _device_aliases().get(device) if device else None
-            macro_alias_label.set_text(f"Alias: {alias or 'unbekannt'}")
+            macro_alias_label.set_text(f"Alias: {alias or 'unknown'}")
             macro_dialog.open()
 
         def confirm_macro() -> None:
             name = (macro_name_input.value or "").strip()
             command = (macro_command_input.value or "").strip()
             if not name or not command:
-                ui.notify("Name und Kommando sind erforderlich", type="warning")
+                ui.notify("Name and command are required", type="warning")
                 return
             device = page_state["active_device"]
             alias = _device_aliases().get(device) if device else None
             if not alias:
-                ui.notify("Keine aktive Schnittstelle ausgewählt", type="warning")
+                ui.notify("No active serial port selected", type="warning")
                 return
             try:
                 _api_device_for_alias(alias)
             except HTTPException:
-                ui.notify("Der Alias ist nicht eindeutig", type="warning")
+                ui.notify("The alias is ambiguous", type="warning")
                 return
             category = "/".join(
                 part.strip()
@@ -192,9 +193,9 @@ def index() -> None:
                 macro_name_input.value = ""
                 macro_command_input.value = ""
                 render_macro_tree()
-                ui.notify(f"Makro '{name}' gespeichert", type="positive")
+                ui.notify(f"Macro '{name}' saved", type="positive")
             except Exception as exc:  # noqa: BLE001
-                ui.notify(f"Makro konnte nicht gespeichert werden: {exc}", type="negative")
+                ui.notify(f"Could not save macro: {exc}", type="negative")
 
         confirm_macro_button.on_click(confirm_macro)
 
@@ -222,7 +223,7 @@ def index() -> None:
                             draw_group(child, group_path)
                         with ui.context_menu():
                             ui.menu_item(
-                                "Makro hinzufügen",
+                                "Add macro",
                                 on_click=lambda path=group_path: open_macro_dialog(path),
                             )
                 for macro in node["macros"]:
@@ -231,16 +232,16 @@ def index() -> None:
                             selected = page_state["active_device"]
                             selected_alias = _device_aliases().get(selected) if selected else None
                             if selected is None or selected_alias != item.alias:
-                                ui.notify("Keine aktive Schnittstelle ausgewählt", type="warning")
+                                ui.notify("No active serial port selected", type="warning")
                                 return
                             connection = manager.get_or_create(
                                 selected, _known_devices().get(selected, 115200)
                             )
                             try:
                                 connection.send(item.command, raw=item.raw)
-                                ui.notify(f"Makro '{item.label}' gesendet")
+                                ui.notify(f"Macro '{item.label}' sent")
                             except Exception as exc:  # noqa: BLE001
-                                ui.notify(f"Makro fehlgeschlagen: {exc}", type="negative")
+                                ui.notify(f"Macro failed: {exc}", type="negative")
 
                         return send
 
@@ -249,20 +250,20 @@ def index() -> None:
                     ).props("flat align=left no-caps").classes("w-full") as macro_button:
                         with ui.context_menu():
                             ui.menu_item(
-                                "Makro hinzufügen",
+                                "Add macro",
                                 on_click=lambda path=category: open_macro_dialog(path),
                             )
 
             with macros_container:
                 if not macros:
-                    ui.label("Keine Makros. Rechtsklick zum Hinzufügen.").classes(
+                    ui.label("No macros. Right-click to add one.").classes(
                         "text-sm text-grey-6"
                     )
                 else:
                     draw_group(root)
                 with ui.context_menu():
                     ui.menu_item(
-                        "Makro hinzufügen", on_click=lambda: open_macro_dialog("")
+                        "Add macro", on_click=lambda: open_macro_dialog("")
                     )
 
     with ui.column().classes("w-full h-full gap-2 p-2"):
@@ -302,9 +303,7 @@ def index() -> None:
 
             with tabs_row:
                 if not devices:
-                    ui.label(
-                        "Keine Favoriten. Unter Einstellungen Favoriten hinzufügen."
-                    )
+                    ui.label("No favorites. Add favorites in Settings.")
                     page_state["active_device"] = None
                     return
                 with ui.tabs().classes("w-full").props("align=center") as tabs:
@@ -324,10 +323,11 @@ def index() -> None:
                 render_terminals(devices, page_state["active_device"])
 
         render_terminals(_favorite_devices())
-        ui.timer(5.0, rescan)
+        safe_timer(5.0, rescan, "Serial")
 
 
 @ui.page("/settings")
+@isolate_panel("Settings")
 def settings_page() -> None:
     build_settings_page(
         setup_dark_mode,

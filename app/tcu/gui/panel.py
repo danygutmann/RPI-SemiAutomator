@@ -1,4 +1,4 @@
-"""TCU status, manual D-Bus calls, introspection, and live event page."""
+"""D-Bus status, method calls, introspection, and live event page."""
 
 from __future__ import annotations
 
@@ -9,62 +9,55 @@ from nicegui import ui
 
 from ..core.runtime import config, tcu_service
 from ..events.models import TCUEvent
-from panels import nav
-from ui_common import setup_dark_mode
+from panels import header, isolate_panel, safe_timer
 
 MAX_VISIBLE_EVENTS = 200
 
 
-@ui.page("/tcu")
-def tcu_page() -> None:
+@ui.page("/dbus")
+@isolate_panel("D-Bus")
+def dbus_page() -> None:
     state: dict[str, object] = {
         "events": [],
         "last_event_id": None,
         "request_id": None,
     }
 
-    with ui.header().classes("items-center justify-between").props("bordered"):
-        ui.label("RPI-SemiAutomator").classes("text-lg font-semibold")
-        nav("tcu")
-        with ui.row().classes("items-center"):
-            setup_dark_mode()
-            ui.button(
-                "Einstellungen", icon="settings", on_click=lambda: ui.navigate.to("/settings")
-            ).props("flat color=white")
+    header("dbus")
 
     with ui.column().classes("w-full p-4 gap-3"):
         with ui.card().classes("w-full"):
-            ui.label("Verbindung").classes("text-lg font-bold")
+            ui.label("Connection").classes("text-lg font-bold")
             status_label = ui.label()
             ui.label(f"Transport: {config.transport_label}").classes("text-sm text-grey-7")
             with ui.row().classes("items-center gap-2"):
-                ui.button("Verbinden", icon="power", on_click=lambda: connect())
-                ui.button("Trennen", icon="power_off", on_click=lambda: disconnect()).props(
+                ui.button("Connect", icon="power", on_click=lambda: connect())
+                ui.button("Disconnect", icon="power_off", on_click=lambda: disconnect()).props(
                     "outline"
                 )
                 changed_label = ui.label()
 
         with ui.card().classes("w-full"):
-            ui.label("D-Bus-Methodenaufruf").classes("text-lg font-bold")
+            ui.label("D-Bus method call").classes("text-lg font-bold")
             with ui.row().classes("w-full gap-2"):
                 service_input = ui.input("Service").classes("flex-1")
                 path_input = ui.input("Object Path", value="/").classes("flex-1")
                 interface_input = ui.input("Interface").classes("flex-1")
-                method_input = ui.input("Methode").classes("flex-1")
-            args_input = ui.textarea("Argumente (JSON-Array)", value="[]").classes("w-full")
+                method_input = ui.input("Method").classes("flex-1")
+            args_input = ui.textarea("Arguments (JSON array)", value="[]").classes("w-full")
             with ui.row().classes("items-center gap-2"):
                 timeout_input = ui.number(
-                    "Timeout (Sekunden)",
+                    "Timeout (seconds)",
                     value=config.timeout_seconds,
                     min=0.1,
                     max=60,
                     step=0.1,
                 ).classes("w-48")
                 ui.button(
-                    "Aufruf starten", icon="play_arrow", on_click=lambda: invoke()
+                    "Run call", icon="play_arrow", on_click=lambda: invoke()
                 )
-                call_status = ui.label("Kein Aufruf gestartet")
-            result_output = ui.textarea("Letztes Ergebnis").props("readonly").classes("w-full")
+                call_status = ui.label("No call started")
+            result_output = ui.textarea("Latest result").props("readonly").classes("w-full")
 
         with ui.card().classes("w-full"):
             ui.label("Introspection").classes("text-lg font-bold")
@@ -74,22 +67,22 @@ def tcu_page() -> None:
                 ui.button(
                     "Introspect", icon="account_tree", on_click=lambda: introspect()
                 )
-            introspection_output = ui.textarea("Interfaces, Methoden und Signaturen").props(
+            introspection_output = ui.textarea("Interfaces, methods, and signatures").props(
                 "readonly"
             ).classes("w-full")
 
         with ui.card().classes("w-full"):
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("Live-Ereignisse").classes("text-lg font-bold")
-                ui.button("Historie leeren", icon="delete", on_click=lambda: clear_events()).props(
+                ui.label("Live events").classes("text-lg font-bold")
+                ui.button("Clear history", icon="delete", on_click=lambda: clear_events()).props(
                     "outline"
                 )
             event_table = ui.table(
                 columns=[
-                    {"name": "timestamp", "label": "Zeit", "field": "timestamp"},
-                    {"name": "event_type", "label": "Ereignis", "field": "event_type"},
+                    {"name": "timestamp", "label": "Time", "field": "timestamp"},
+                    {"name": "event_type", "label": "Event", "field": "event_type"},
                     {"name": "request_id", "label": "Request-ID", "field": "request_id"},
-                    {"name": "payload", "label": "Daten", "field": "payload"},
+                    {"name": "payload", "label": "Data", "field": "payload"},
                 ],
                 rows=[],
                 row_key="event_id",
@@ -98,15 +91,15 @@ def tcu_page() -> None:
     def show_status() -> None:
         status = tcu_service.status()
         status_label.set_text(
-            f"{'Verbunden' if status['connected'] else 'Getrennt'}"
-            + (f" · Fehler: {status['error']}" if status.get("error") else "")
+            f"{'Connected' if status['connected'] else 'Disconnected'}"
+            + (f" · Error: {status['error']}" if status.get("error") else "")
         )
-        changed_label.set_text(f"Letzte Änderung: {status['last_changed_at']}")
+        changed_label.set_text(f"Last changed: {status['last_changed_at']}")
 
     async def connect() -> None:
         try:
             await tcu_service.connect()
-            ui.notify("TCU-D-Bus verbunden", type="positive")
+            ui.notify("D-Bus connected", type="positive")
         except Exception as exc:
             ui.notify(str(exc), type="negative")
         show_status()
@@ -114,7 +107,7 @@ def tcu_page() -> None:
     async def disconnect() -> None:
         try:
             await tcu_service.disconnect()
-            ui.notify("TCU-D-Bus getrennt", type="info")
+            ui.notify("D-Bus disconnected", type="info")
         except Exception as exc:
             ui.notify(str(exc), type="negative")
         show_status()
@@ -123,7 +116,7 @@ def tcu_page() -> None:
         try:
             arguments = json.loads(args_input.value or "[]")
             if not isinstance(arguments, list):
-                raise ValueError("Argumente müssen ein JSON-Array sein")
+                raise ValueError("Arguments must be a JSON array")
             record = tcu_service.submit_call(
                 service_input.value or "",
                 path_input.value or "",
@@ -136,7 +129,7 @@ def tcu_page() -> None:
             call_status.set_text(f"Angenommen · Request-ID: {record.request_id}")
             result_output.value = json.dumps(record.to_dict(), ensure_ascii=False, indent=2)
         except Exception as exc:
-            call_status.set_text("Request abgewiesen")
+            call_status.set_text("Request rejected")
             ui.notify(str(exc), type="negative")
 
     async def introspect() -> None:
@@ -159,7 +152,7 @@ def tcu_page() -> None:
                     lines.append(f"  signal {signal.get('name')}({', '.join(args)})")
             introspection_output.value = "\n".join(lines) or xml
         except Exception as exc:
-            introspection_output.value = f"Introspection fehlgeschlagen: {exc}"
+            introspection_output.value = f"Introspection failed: {exc}"
 
     def clear_events() -> None:
         state["events"] = []
@@ -209,4 +202,9 @@ def tcu_page() -> None:
         event_table.update()
 
     show_status()
-    ui.timer(0.25, refresh)
+    safe_timer(0.25, refresh, "D-Bus")
+
+
+@ui.page("/tcu")
+def legacy_tcu_redirect() -> None:
+    ui.navigate.to("/dbus")

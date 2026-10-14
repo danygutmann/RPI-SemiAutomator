@@ -8,7 +8,7 @@ from typing import Callable
 from fastapi import HTTPException, Request
 from nicegui import app, ui
 
-from panels import header
+from panels import header, isolate_panel, safe_timer
 
 RELAY_CHANNELS = 8
 
@@ -59,18 +59,19 @@ def set_all(on: bool) -> list[dict]:
 
 
 @ui.page("/relay")
+@isolate_panel("Relay")
 def relay_page() -> None:
     header("relay")
     with ui.column().classes("w-full p-4 gap-3"):
         with ui.row().classes("items-center gap-2"):
-            ui.button("Alle an", icon="power", on_click=lambda: set_all(True))
-            ui.button("Alle aus", icon="power_off", on_click=lambda: set_all(False)).props("outline")
+            ui.button("All on", icon="power", on_click=lambda: set_all(True))
+            ui.button("All off", icon="power_off", on_click=lambda: set_all(False)).props("outline")
         switches: dict[int, ui.switch] = {}
         with ui.grid(columns=2).classes("gap-2"):
             for channel in relay_state["channels"]:
                 with ui.card().classes("p-3"):
                     with ui.row().classes("items-center gap-3"):
-                        ui.label(f"Kanal {channel['channel']}").classes("font-bold")
+                        ui.label(f"Channel {channel['channel']}").classes("font-bold")
                         ui.input(
                             "Alias",
                             value=channel["alias"],
@@ -93,7 +94,7 @@ def relay_page() -> None:
                 if switch.value != channel["on"]:
                     switch.value = channel["on"]
 
-        ui.timer(1.0, sync)
+        safe_timer(1.0, sync, "Relay")
 
 
 def register_api(check_token: Callable, bearer: Callable) -> None:

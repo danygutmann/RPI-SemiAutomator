@@ -8,7 +8,7 @@ from typing import Callable
 from fastapi import HTTPException, Request
 from nicegui import app, ui
 
-from panels import header
+from panels import header, isolate_panel, safe_timer
 
 PSU_MAX_CURRENT = 40.0
 PSU_MAX_VOLTAGE = 12.0
@@ -48,16 +48,17 @@ def update_psu(
 
 
 @ui.page("/psu")
+@isolate_panel("Power supply")
 def psu_page() -> None:
     header("psu")
     with ui.column().classes("w-full p-4 gap-3 max-w-xl"):
         output = ui.switch(
-            "Ausgang",
+            "Output",
             value=psu_state["output"],
             on_change=lambda event: update_psu(output=event.value),
         )
         current = ui.number(
-            "Strom-Limit (A)",
+            "Current limit (A)",
             value=psu_state["current_limit"],
             min=0,
             max=PSU_MAX_CURRENT,
@@ -67,7 +68,7 @@ def psu_page() -> None:
             and update_psu(current_limit=event.value),
         )
         voltage = ui.number(
-            "Spannung (V)",
+            "Voltage (V)",
             value=psu_state["voltage"],
             min=0,
             max=PSU_MAX_VOLTAGE,
@@ -79,12 +80,12 @@ def psu_page() -> None:
         measured = ui.label()
 
         def sync() -> None:
-            measured.set_text(f"Aktueller Strom: {psu_state['measured_current']:.2f} A")
+            measured.set_text(f"Measured current: {psu_state['measured_current']:.2f} A")
             if output.value != psu_state["output"]:
                 output.value = psu_state["output"]
 
         sync()
-        ui.timer(1.0, sync)
+        safe_timer(1.0, sync, "Power supply")
 
 
 def register_api(check_token: Callable, bearer: Callable) -> None:
