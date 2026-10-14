@@ -11,5 +11,5 @@ def setup_dark_mode() -> None:
         app.storage.user["dark"] = bool(dark.value)
 
     ui.button(icon="dark_mode", on_click=toggle).props("flat color=white round").tooltip(
-        "Hell/Dunkel umschalten"
+        "Toggle dark mode"
     )

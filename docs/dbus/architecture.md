@@ -1,4 +1,4 @@
-# TCU architecture
+# D-Bus architecture
 
 ## Repository integration
 
@@ -10,7 +10,7 @@ browser pages; serial and CAN reception run outside the UI event loop. Relay
 and PSU controls currently expose in-memory state and placeholder hardware
 hooks in `app/panels.py`.
 
-TCU-only implementation is under `app/tcu/`:
+The D-Bus integration implementation (in the legacy `app/tcu/` package) is:
 
 | Module | Responsibility |
 | --- | --- |
@@ -23,10 +23,10 @@ TCU-only implementation is under `app/tcu/`:
 | `events/models.py` | Versioned event envelope. |
 | `events/dispatcher.py` | Bounded fan-out and in-memory event history. |
 | `api/routes.py`, `api/schemas.py` | Versioned REST routes, OpenAPI schemas, auth, and WebSocket transport. |
-| `gui/tab.py` | NiceGUI TCU page; no D-Bus connection or message construction. |
+| `gui/panel.py` | NiceGUI D-Bus page; no D-Bus connection or message construction. |
 
-The dependency direction is GUI/API → TCU service → D-Bus adapter. The service
-publishes common event objects; external clients consume them through the TCU
+The dependency direction is GUI/API → D-Bus service → D-Bus adapter. The service
+publishes common event objects; external clients consume them through the legacy API
 WebSocket and the GUI presents the same event stream from the in-process
 dispatcher. The REST API is registered on NiceGUI's existing FastAPI app, so
 there is no second HTTP server. Existing APIs and hardware managers are not
@@ -34,25 +34,25 @@ replaced.
 
 ## Remote transport prerequisite
 
-The repository and current environment contain no TCU address, service/interface
+The repository and current environment contain no target bus address, service/interface
 definitions, credentials, SSH configuration, or proxy specification. Therefore
-the actual TCU route cannot be verified here, and the application does not
+the actual remote route cannot be verified here, and the application does not
 invent a target or start an SSH session. The chosen library is `dbus-next`
 0.2.3, an asynchronous D-Bus client. It connects only to an explicitly
 configured local Unix socket.
 
 For remote use, an operator must first provide a local Unix socket backed by a
 verified, protected tunnel/proxy. The application does not provide SSH,
-credentials, or any D-Bus TCP transport. TCU support is disabled by default and
+credentials, or any D-Bus TCP transport. D-Bus support is disabled by default and
 reports a clear transport error until configured.
 
 ## Method-call sequence
 
 1. A client submits the service, object path, interface, method, arguments,
-   and optional timeout using `POST /api/v1/tcu/calls`.
+   and optional timeout using `POST /api/v1/dbus/calls`.
 2. The API authenticates and validates the JSON request, assigns a UUID, keeps
    the call record, and responds with `202 Accepted`.
-3. The TCU service emits `method.started` and performs the async call without
+3. The D-Bus service emits `method.started` and performs the async call without
    blocking the NiceGUI loop.
 4. The adapter introspects the requested object, checks the input signature,
    converts typed JSON values, and sends the D-Bus message.
@@ -83,13 +83,13 @@ calls.
 
 Errors distinguish invalid arguments, unconfigured/unavailable transport,
 missing D-Bus targets, remote method errors, timeouts, and internal failures.
-Responses do not include connection credentials. Unknown concrete TCU
+Responses do not include connection credentials. Unknown concrete bus
 interfaces are not hard-coded.
 
 ## Future asynchronous Pytest runner
 
 A later runner can be added as another application service that uses the same
-TCU service/adapter and hardware managers. It can publish test start/progress/
+D-Bus service/adapter and hardware managers. It can publish test start/progress/
 result events through the existing dispatcher and expose start/status routes
 without placing test logic in NiceGUI callbacks. This change does not implement
 a test runner, scheduler, macro engine, or test editor.

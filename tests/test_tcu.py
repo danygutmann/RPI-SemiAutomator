@@ -97,6 +97,10 @@ def make_service(client=None, *, queue_size=100):
 
 
 def test_config_defaults_disabled_and_rejects_tcp_transport(monkeypatch):
+    monkeypatch.delenv("DBUS_ENABLED", raising=False)
+    monkeypatch.delenv("DBUS_ADDRESS", raising=False)
+    monkeypatch.delenv("DBUS_OBJECT_PATHS", raising=False)
+    monkeypatch.delenv("DBUS_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("TCU_ENABLED", raising=False)
     monkeypatch.delenv("TCU_DBUS_ADDRESS", raising=False)
     monkeypatch.delenv("TCU_OBJECT_PATHS", raising=False)
@@ -106,6 +110,22 @@ def test_config_defaults_disabled_and_rejects_tcp_transport(monkeypatch):
     monkeypatch.setenv("TCU_DBUS_ADDRESS", "tcp:host=127.0.0.1,port=5555")
     with pytest.raises(ValueError, match="Unix socket"):
         load_config()
+
+
+def test_dbus_environment_names_take_precedence_over_legacy_tcu_names(monkeypatch):
+    monkeypatch.setenv("DBUS_ENABLED", "true")
+    monkeypatch.setenv("DBUS_ADDRESS", "unix:path=/run/dbus.sock")
+    monkeypatch.setenv("DBUS_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("DBUS_OBJECT_PATHS", "/,/org/example")
+    monkeypatch.setenv("TCU_ENABLED", "false")
+    monkeypatch.setenv("TCU_DBUS_ADDRESS", "unix:path=/run/legacy.sock")
+
+    config = load_config()
+
+    assert config.enabled is True
+    assert config.bus_address == "unix:path=/run/dbus.sock"
+    assert config.timeout_seconds == 5
+    assert config.known_object_paths == ("/", "/org/example")
 
 
 def test_dbus_client_introspects_validates_calls_and_restarts_signal_registration(
@@ -352,6 +372,7 @@ def test_tcu_api_call_validation_status_result_events_and_openapi():
     app = FastAPI()
     register_api(app, lambda token: None, lambda request: None, service)
     with TestClient(app) as client:
+        assert client.get("/api/v1/dbus/status").json()["connected"] is True
         assert client.get("/api/v1/tcu/status").json()["connected"] is True
         assert client.get("/api/v1/tcu/services").json() == ["org.example.Test"]
         assert client.get("/api/v1/tcu/introspect").status_code == 422
@@ -405,6 +426,7 @@ def test_tcu_api_call_validation_status_result_events_and_openapi():
             headers={"content-type": "application/json"},
         ).status_code == 413
         schema = client.get("/openapi.json").json()
+        assert "/api/v1/dbus/calls" in schema["paths"]
         assert "/api/v1/tcu/calls" in schema["paths"]
         assert "/api/v1/tcu/ws" not in schema["paths"]
 

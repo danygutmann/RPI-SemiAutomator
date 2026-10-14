@@ -1,4 +1,4 @@
-"""UI for an individual serial terminal card."""
+"""UI for an individual serial terminal panel."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 
 from nicegui import ui
 
+from panels import safe_timer
 from serial_manager import SerialConnection
 
 
@@ -24,32 +25,33 @@ def build_port_card(
     with ui.column().classes("w-full h-full gap-2"):
         with ui.row().classes("items-center w-full justify-between shrink-0"):
             ui.label(label).classes("text-lg font-bold")
-            status_badge = ui.badge("getrennt", color="red")
+            status_badge = ui.badge("Disconnected", color="red")
 
             def download_log() -> None:
                 filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(device).name) or "serial"
                 content = "\n".join(connection.lines).encode("utf-8")
                 ui.download(content, f"{filename}.log", media_type="text/plain; charset=utf-8")
 
-            ui.button("Log herunterladen", on_click=download_log, icon="download").props(
+            ui.button("Download log", on_click=download_log, icon="download").props(
                 "outline"
             )
 
         with ui.row().classes("items-center w-full shrink-0"):
-            def do_connect() -> None:
+            def toggle_connection() -> None:
                 try:
-                    connection.connect()
-                    ui.notify(f"{device} verbunden", type="positive")
+                    if connection.is_open:
+                        connection.disconnect()
+                        ui.notify(f"{device} disconnected", type="warning")
+                    else:
+                        connection.connect()
+                        ui.notify(f"{device} connected", type="positive")
                 except Exception as exc:  # noqa: BLE001 - surfaced to the user
-                    ui.notify(f"Verbindung fehlgeschlagen: {exc}", type="negative")
+                    ui.notify(f"Connection failed: {exc}", type="negative")
 
-            def do_disconnect() -> None:
-                connection.disconnect()
-                ui.notify(f"{device} getrennt", type="warning")
-
-            ui.button("Verbinden", on_click=do_connect, icon="power")
-            ui.button("Trennen", on_click=do_disconnect, icon="power_off").props(
-                "outline"
+            connection_button = ui.button(
+                "Disconnect" if connection.is_open else "Connect",
+                on_click=toggle_connection,
+                icon="power",
             )
 
         terminal = ui.xterm(
@@ -70,16 +72,23 @@ def build_port_card(
                     const key = {key};
                     const savedHeight = Number(localStorage.getItem(key));
                     if (savedHeight >= 250) element.style.height = `${{savedHeight}}px`;
-                    new ResizeObserver(entries => {{
-                        const height = Math.round(entries[0].contentRect.height);
+                    let saveTimeout;
+                    const persistHeight = () => {{
+                        const height = Math.round(element.getBoundingClientRect().height);
                         if (height >= 250) localStorage.setItem(key, String(height));
                         runMethod({terminal.id}, "fit", []);
+                    }};
+                    new ResizeObserver(() => {{
+                        clearTimeout(saveTimeout);
+                        saveTimeout = setTimeout(persistHeight, 150);
                     }}).observe(element);
+                    element.addEventListener("pointerup", persistHeight);
+                    element.addEventListener("mouseup", persistHeight);
                 }}
                 """
             )
 
-        ui.timer(0.2, restore_terminal_height, once=True)
+        safe_timer(0.2, restore_terminal_height, "Serial", once=True)
 
         def on_serial(direction: str, text: str) -> None:
             if direction == "rx":
@@ -94,7 +103,7 @@ def build_port_card(
             try:
                 connection.send(e.data, raw=True)
             except Exception as exc:  # noqa: BLE001
-                ui.notify(f"Senden fehlgeschlagen: {exc}", type="negative")
+                ui.notify(f"Send failed: {exc}", type="negative")
 
         terminal.on_data(on_terminal_data)
         with ui.row().classes("w-full justify-end shrink-0"):
@@ -102,23 +111,20 @@ def build_port_card(
             def clear_display() -> None:
                 terminal.run_terminal_method("clear")
                 connection.lines.clear()
-                ui.notify("Anzeige geleert", type="info")
+                ui.notify("Terminal cleared", type="info")
 
-            ui.button("Anzeige leeren", on_click=clear_display, icon="delete_sweep").props(
+            ui.button("Clear terminal", on_click=clear_display, icon="delete_sweep").props(
                 "outline dense"
             )
 
-        ui.label("Zum Tippen in das Terminal klicken – Eingaben (inkl. Tab) werden direkt gesendet.").classes(
-            "text-xs text-grey shrink-0"
-        )
-
         def refresh() -> None:
             if connection.error:
-                status_badge.set_text("Fehler")
+                status_badge.set_text("Error")
                 status_badge.props("color=orange")
             else:
-                status_badge.set_text("verbunden" if connection.is_open else "getrennt")
+                status_badge.set_text("Connected" if connection.is_open else "Disconnected")
                 status_badge.props(f"color={'green' if connection.is_open else 'red'}")
+            connection_button.set_text("Disconnect" if connection.is_open else "Connect")
             if terminal.is_deleted:
                 connection.unsubscribe(on_serial)
                 return
@@ -128,4 +134,4 @@ def build_port_card(
             if chunks:
                 terminal.write(re.sub(r"(?<!\r)\n", "\r\n", "".join(chunks)))
 
-    return ui.timer(0.1, refresh)
+    return safe_timer(0.1, refresh, "Serial")

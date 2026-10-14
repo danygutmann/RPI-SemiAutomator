@@ -1,8 +1,9 @@
-# TCU REST API
+# D-Bus REST API
 
 The API is registered on the existing NiceGUI/FastAPI server. OpenAPI and
 Swagger UI are available at `/openapi.json` and `/docs`. All routes below use
-the `/api/v1/tcu` prefix. If `RPI_SEMIAUTOMATOR_API_TOKEN` is set, provide the
+the `/api/v1/dbus` prefix. Every route is also available under the legacy
+`/api/v1/tcu` prefix for backward compatibility. If `RPI_SEMIAUTOMATOR_API_TOKEN` is set, provide the
 configured token in the Authorization header or `?token=...`.
 Prefer the Authorization header because URLs can be logged. The API is not
 safe for public exposure merely because the token feature exists; use a trusted
@@ -14,29 +15,29 @@ Errors use `{"error":{"code":"...","message":"..."}}`.
 
 | Method and path | Purpose | Success |
 | --- | --- | --- |
-| `GET /api/v1/tcu/status` | Enabled/connected state, transport label, last change, and last error. | `200` status object. |
-| `POST /api/v1/tcu/connect` | Connect to the configured local socket/tunnel. | `200` status object. |
-| `POST /api/v1/tcu/disconnect` | Close the connection and signal subscription. | `200` disconnected status. |
-| `GET /api/v1/tcu/services` | Ask the bus daemon for service names. | `200` string array. |
-| `GET /api/v1/tcu/objects?service=...` | List configured, known paths (optionally associated with a service). | `200` object array; not full discovery. |
-| `GET /api/v1/tcu/introspect?service=...&object_path=...` | Introspect one selected object. | `200` with service, path, and D-Bus XML. |
-| `POST /api/v1/tcu/calls` | Accept a method call for asynchronous execution. | `202` with request ID and submission timestamp. |
-| `GET /api/v1/tcu/calls/{request_id}` | Retrieve accepted/running/completed/failed call state. | `200` call result object. |
+| `GET /api/v1/dbus/status` | Enabled/connected state, transport label, last change, and last error. | `200` status object. |
+| `POST /api/v1/dbus/connect` | Connect to the configured local socket/tunnel. | `200` status object. |
+| `POST /api/v1/dbus/disconnect` | Close the connection and signal subscription. | `200` disconnected status. |
+| `GET /api/v1/dbus/services` | Ask the bus daemon for service names. | `200` string array. |
+| `GET /api/v1/dbus/objects?service=...` | List configured, known paths (optionally associated with a service). | `200` object array; not full discovery. |
+| `GET /api/v1/dbus/introspect?service=...&object_path=...` | Introspect one selected object. | `200` with service, path, and D-Bus XML. |
+| `POST /api/v1/dbus/calls` | Accept a method call for asynchronous execution. | `202` with request ID and submission timestamp. |
+| `GET /api/v1/dbus/calls/{request_id}` | Retrieve accepted/running/completed/failed call state. | `200` call result object. |
 
 ### Call request
 
 ```json
 {
-  "service": "com.example.TcuService",
-  "object_path": "/com/example/Tcu",
-  "interface": "com.example.Tcu",
+  "service": "com.example.DBusService",
+  "object_path": "/com/example/DBus",
+  "interface": "com.example.DBus",
   "method": "GetStatus",
   "arguments": [],
   "timeout_seconds": 10
 }
 ```
 
-Names above are placeholders, not asserted TCU APIs. The actual request is
+Names above are placeholders, not asserted D-Bus APIs. The actual request is
 validated against introspection immediately before sending. `arguments` is a
 JSON array (maximum 64 arguments); request bodies are limited to 256 KiB and
 timeouts to 60 seconds. On acceptance:
@@ -49,7 +50,7 @@ timeouts to 60 seconds. On acceptance:
 }
 ```
 
-`GET /calls/{request_id}` returns `request_id`, `status`, `service`,
+`GET /api/v1/dbus/calls/{request_id}` returns `request_id`, `status`, `service`,
 `object_path`, `interface`, `method`, `submitted_at`, `started_at`,
 `completed_at`, `duration_ms`, `result`, `result_signature`, and `error`.
 Time fields not yet known are `null`. Result values are returned as an array of
@@ -89,17 +90,17 @@ single-value signature.
   in the call result as `internal_error`.
 
 Method execution errors occur after an accepted `202`; poll the request or
-consume the event WebSocket. A local timeout is not proof the TCU did not
+consume the event WebSocket. A local timeout is not proof the remote service did not
 execute the request. The application does not retry calls.
 
 ## Example
 
 ```sh
-curl http://localhost:8080/api/v1/tcu/status
+curl http://localhost:8080/api/v1/dbus/status
 
 curl -X POST -H 'Content-Type: application/json' \
-  --data '{"service":"com.example.TcuService","object_path":"/com/example/Tcu","interface":"com.example.Tcu","method":"GetStatus","arguments":[]}' \
-  http://localhost:8080/api/v1/tcu/calls
+  --data '{"service":"com.example.DBusService","object_path":"/com/example/DBus","interface":"com.example.DBus","method":"GetStatus","arguments":[]}' \
+  http://localhost:8080/api/v1/dbus/calls
 ```
 
-Replace the placeholder names only after obtaining actual TCU introspection.
+Replace the placeholder names only after obtaining actual D-Bus introspection.

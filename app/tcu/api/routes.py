@@ -1,4 +1,4 @@
-"""TCU REST endpoints and event WebSocket."""
+"""D-Bus REST endpoints and event WebSocket."""
 
 from __future__ import annotations
 
@@ -71,8 +71,8 @@ class TCUAPIRoute(APIRoute):
                 code = "authentication_failed" if exc.status_code == 401 else "http_error"
                 return _error(code, str(exc.detail), exc.status_code)
             except Exception as exc:
-                logger.error("Unhandled TCU API failure (%s)", type(exc).__name__)
-                return _error("internal_error", "Internal TCU API error", 500)
+                logger.error("Unhandled D-Bus API failure (%s)", type(exc).__name__)
+                return _error("internal_error", "Internal D-Bus API error", 500)
 
         return handler
 
@@ -93,17 +93,17 @@ def register_api(
         return _error(exc.code, str(exc), exc.status_code)
 
     @router.get(
-        "/api/v1/tcu/status",
+        "/status",
         response_model=TCUStatus,
         responses={401: {"model": APIError}},
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_status(request: Request):
         auth(request)
         return backend.status()
 
     @router.post(
-        "/api/v1/tcu/connect",
+        "/connect",
         response_model=TCUStatus,
         responses={
             401: {"model": APIError},
@@ -111,7 +111,7 @@ def register_api(
             503: {"model": APIError},
             504: {"model": APIError},
         },
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_connect(request: Request):
         auth(request)
@@ -121,17 +121,17 @@ def register_api(
             return handle_tcu_error(exc)
 
     @router.post(
-        "/api/v1/tcu/disconnect",
+        "/disconnect",
         response_model=TCUStatus,
         responses={401: {"model": APIError}},
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_disconnect(request: Request):
         auth(request)
         return await backend.disconnect()
 
     @router.get(
-        "/api/v1/tcu/services",
+        "/services",
         response_model=list[str],
         responses={
             401: {"model": APIError},
@@ -139,7 +139,7 @@ def register_api(
             503: {"model": APIError},
             504: {"model": APIError},
         },
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_services(request: Request):
         auth(request)
@@ -149,17 +149,17 @@ def register_api(
             return handle_tcu_error(exc)
 
     @router.get(
-        "/api/v1/tcu/objects",
+        "/objects",
         response_model=list[TCUObject],
         responses={401: {"model": APIError}},
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_objects(request: Request, service: str | None = None):
         auth(request)
         return await backend.objects(service)
 
     @router.get(
-        "/api/v1/tcu/introspect",
+        "/introspect",
         response_model=IntrospectionResult,
         responses={
             400: {"model": APIError},
@@ -168,7 +168,7 @@ def register_api(
             503: {"model": APIError},
             504: {"model": APIError},
         },
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_introspect(
         request: Request, service: str, object_path: str
@@ -186,7 +186,7 @@ def register_api(
             return handle_tcu_error(exc)
 
     @router.post(
-        "/api/v1/tcu/calls",
+        "/calls",
         status_code=202,
         response_model=AcceptedCall,
         responses={
@@ -205,7 +205,7 @@ def register_api(
                 },
             }
         },
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_call(request: Request):
         auth(request)
@@ -249,10 +249,10 @@ def register_api(
         )
 
     @router.get(
-        "/api/v1/tcu/calls/{request_id}",
+        "/calls/{request_id}",
         response_model=CallResult,
         responses={401: {"model": APIError}, 404: {"model": APIError}},
-        tags=["TCU"],
+        tags=["D-Bus"],
     )
     async def tcu_call_result(request: Request, request_id: str):
         auth(request)
@@ -261,7 +261,7 @@ def register_api(
             return _error("request_not_found", "Unknown or expired request_id", 404)
         return record.to_dict()
 
-    @router.websocket("/api/v1/tcu/ws")
+    @router.websocket("/ws")
     async def tcu_events(websocket: WebSocket, token: str | None = None) -> None:
         authorization = websocket.headers.get("authorization", "")
         supplied = (
@@ -278,7 +278,7 @@ def register_api(
         try:
             queue = backend.events.subscribe()
         except RuntimeError:
-            await websocket.close(code=1013, reason="TCU event client limit reached")
+            await websocket.close(code=1013, reason="D-Bus event client limit reached")
             return
 
         async def sender() -> None:
@@ -318,4 +318,5 @@ def register_api(
             await asyncio.gather(*tasks, return_exceptions=True)
             backend.events.unsubscribe(queue)
 
-    app.include_router(router)
+    app.include_router(router, prefix="/api/v1/dbus")
+    app.include_router(router, prefix="/api/v1/tcu")

@@ -1,1 +1,1 @@
-"""NiceGUI presentation for TCU operations."""
+"""NiceGUI D-Bus control panel."""
